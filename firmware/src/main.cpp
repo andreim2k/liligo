@@ -182,17 +182,29 @@ void showKeyBridgeStatus(const char* status, uint16_t statusColor) {
     lcd.setCursor(5, 25);
     lcd.println(status);
 
-    // Key count
+    // Show queue size while typing, otherwise show key count
+    size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
     lcd.setTextColor(COLOR_TEXT);
     lcd.setCursor(5, 45);
-    lcd.printf("Keys: %d", keyCount);
+    if (queue_size > 0) {
+        lcd.printf("Q:%d K:%d", queue_size, keyCount);
+    } else {
+        lcd.printf("Keys: %d", keyCount);
+    }
 }
 
 // Update key count display (no blinking)
 void updateKeyCount() {
     lcd.setTextColor(COLOR_TEXT, COLOR_BG);
     lcd.setCursor(5, 45);
-    lcd.printf("Keys: %d  ", keyCount);
+
+    // Show queue status while typing
+    size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
+    if (queue_size > 0) {
+        lcd.printf("Queue: %d  ", queue_size);
+    } else {
+        lcd.printf("Keys: %d  ", keyCount);
+    }
 }
 
 // HID keycode to ASCII conversion for common keys
@@ -737,10 +749,15 @@ void updateKeyBridgeDisplay() {
  * Main display update dispatcher
  */
 void updateDisplay() {
-    if (currentMode == MODE_MOUSE_MOVER) {
-        updateMouseMoverDisplay();
-    } else {
+    // If we're typing (queue has chars), ALWAYS show keyboard screen
+    bool isTyping = (queueStart != queueEnd);
+
+    if (isTyping || currentMode == MODE_KEYBOARD_BRIDGE) {
+        // Show keyboard screen while typing or connected
         updateKeyBridgeDisplay();
+    } else {
+        // Show mouse mover screen when idle and disconnected
+        updateMouseMoverDisplay();
     }
 }
 
