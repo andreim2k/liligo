@@ -125,7 +125,7 @@ String lastText = "";
 
 // Text queue for async processing (prevents BLE callback blocking)
 // Use circular buffer instead of String to avoid heap fragmentation
-const size_t MAX_QUEUE_SIZE = 4096; // 4KB buffer
+const size_t MAX_QUEUE_SIZE = 65536; // 64KB buffer - with flow control, supports unlimited pastes
 char textQueueBuffer[MAX_QUEUE_SIZE];
 size_t queueStart = 0;
 size_t queueEnd = 0;
@@ -424,20 +424,34 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
         // This prevents BLE callback from blocking during long typing sessions
         lastText = buffer;
 
-        // Add chars to circular buffer queue
+        // Add chars to circular buffer queue with flow control
+        // If buffer is full, WAIT for main loop to consume chars instead of dropping them
         size_t chars_added = 0;
         for (size_t i = 0; i < buffer.length(); i++)
         {
             size_t next = (queueEnd + 1) % MAX_QUEUE_SIZE;
-            if (next != queueStart)
-            { // Don't overwrite unprocessed chars
+
+            // Wait for space if buffer is full (allows unlimited clipboard pastes)
+            unsigned long waitStart = millis();
+            const unsigned long FLOW_CONTROL_TIMEOUT = 60000; // Wait up to 60 seconds
+
+            while (next == queueStart && (millis() - waitStart) < FLOW_CONTROL_TIMEOUT)
+            {
+                delay(1); // Let main loop consume characters (1ms at a time)
+                next = (queueEnd + 1) % MAX_QUEUE_SIZE;
+            }
+
+            if (next != queueStart) // Space is now available
+            {
                 textQueueBuffer[queueEnd] = buffer[i];
                 queueEnd = next;
                 chars_added++;
             }
             else
             {
-                break; // Buffer full
+                // Timeout - buffer still full (shouldn't happen with normal usage)
+                Serial.printf("ERROR: Buffer timeout! Dropped %d characters\n", buffer.length() - i);
+                break;
             }
         }
 
