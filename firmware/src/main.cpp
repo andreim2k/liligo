@@ -880,8 +880,8 @@ void updateBLEDisplay()
 
     // Stats text - clear character areas before drawing
 
-    // Progress line - clear only the percentage area (where numbers go)
-    lcd.fillRect(48, 50, 32, 10, COLOR_BG);
+    // Progress line - clear entire line to prevent overwriting
+    lcd.fillRect(0, 50, dispWidth, 10, COLOR_BG);
     lcd.setTextColor(COLOR_DIM);
     lcd.setTextSize(1);
     lcd.setCursor(5, 52);
@@ -894,8 +894,8 @@ void updateBLEDisplay()
     sprintf(progText, "%d%%", (int)(progress * 100));
     lcd.print(progText);
 
-    // Queue status line - clear only the queue data area
-    lcd.fillRect(38, 63, 42, 10, COLOR_BG);
+    // Queue status line - clear entire queue data area to prevent overwriting
+    lcd.fillRect(0, 63, dispWidth, 10, COLOR_BG);
     lcd.setTextColor(COLOR_DIM);
     lcd.setCursor(5, 65);
     lcd.print("Queue:");
