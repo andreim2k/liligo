@@ -166,63 +166,7 @@ void drawRoundRect(int x, int y, int width, int height, int radius, uint16_t col
 void updateMouseMoverDisplay();
 void updateKeyBridgeDisplay();
 
-// Update KeyBridge display with status
-void showKeyBridgeStatus(const char* status, uint16_t statusColor) {
-    // COMPLETELY CLEAR THE ENTIRE SCREEN
-    lcd.fillScreen(COLOR_BG);
-    delay(1);
-    lcd.fillScreen(COLOR_BG);
-
-    // TITLE LINE - clear first, then write
-    lcd.fillRect(0, 0, lcd.width(), 16, COLOR_BG);
-    lcd.setTextColor(COLOR_ACCENT, COLOR_BG);
-    lcd.setTextSize(1);
-    lcd.setCursor(5, 5);
-    lcd.printf("%-15s", "KeyBridge");
-
-    // DIVIDER LINE
-    lcd.drawFastHLine(0, 18, lcd.width(), COLOR_ACCENT);
-
-    // STATUS LINE - clear first, then write
-    lcd.fillRect(0, 20, lcd.width(), 14, COLOR_BG);
-    lcd.setTextColor(statusColor, COLOR_BG);
-    lcd.setCursor(5, 25);
-    lcd.printf("%-15s", status);
-
-    // SPACER - clear completely
-    lcd.fillRect(0, 35, lcd.width(), 10, COLOR_BG);
-
-    // COUNTER LINE - clear first, then write
-    lcd.fillRect(0, 43, lcd.width(), 14, COLOR_BG);
-    size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
-    lcd.setTextColor(COLOR_TEXT, COLOR_BG);
-    lcd.setCursor(5, 45);
-    if (queue_size > 0) {
-        lcd.printf("Q:%5d K:%5d", queue_size, keyCount);
-    } else {
-        lcd.printf("Keys: %6d  ", keyCount);
-    }
-}
-
-// Update key count display (no blinking)
-void updateKeyCount() {
-    // COMPLETELY CLEAR the counter line before updating
-    lcd.fillRect(0, 43, lcd.width(), 14, COLOR_BG);
-
-    // Now write fresh text
-    lcd.setTextColor(COLOR_TEXT, COLOR_BG);
-    lcd.setCursor(5, 45);
-
-    // Show queue status while typing
-    size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
-    if (queue_size > 0) {
-        // Queue mode - show both queue and key count
-        lcd.printf("Q:%5d K:%5d", queue_size, keyCount);
-    } else {
-        // Idle mode - show just key count
-        lcd.printf("Keys: %6d  ", keyCount);
-    }
-}
+// BLE display functions REMOVED - no display for BLE mode
 
 // HID keycode to ASCII conversion for common keys
 char hidToAscii(uint8_t keycode, bool shift) {
@@ -754,72 +698,42 @@ void updateMouseMoverDisplay() {
     }
 }
 
-/**
- * Update KeyBridge display
- */
-void updateKeyBridgeDisplay() {
-    static bool needsFullRedraw = true;
-    static uint32_t lastKeyCount = 0;
-
-    // On mode switch, do FULL redraw
-    if (needsModeSwitch) {
-        lcd.fillScreen(COLOR_BG);
-        showKeyBridgeStatus("Connected", COLOR_SUCCESS);
-        needsFullRedraw = false;
-        needsModeSwitch = false;
-        lastKeyCount = keyCount;
-        return;
-    }
-
-    // On first run, do FULL redraw
-    if (needsFullRedraw) {
-        lcd.fillScreen(COLOR_BG);
-        showKeyBridgeStatus("Connected", COLOR_SUCCESS);
-        needsFullRedraw = false;
-        lastKeyCount = keyCount;
-        return;
-    }
-
-    // CRITICAL: ALWAYS do complete screen clear and redraw
-    // This ensures ZERO garbage pixels during typing
-    lcd.fillScreen(COLOR_BG);
-    showKeyBridgeStatus("Connected", COLOR_SUCCESS);
-    lastKeyCount = keyCount;
-}
+// BLE Display - REMOVED: BLE mode uses ONLY LED, no display
 
 /**
  * Main display update dispatcher
  */
 void updateDisplay() {
-    // If we're typing (queue has chars), ONLY blink LED - don't show display
+    // If we're typing (queue has chars), ONLY blink LED - don't touch display at all
     bool isTyping = (queueStart != queueEnd);
     OperatingMode displayMode = (isTyping || currentMode == MODE_KEYBOARD_BRIDGE) ? MODE_KEYBOARD_BRIDGE : MODE_MOUSE_MOVER;
 
-    // Detect mode switch and signal full redraw needed
+    // Detect mode switch
     if (displayMode != lastDisplayMode) {
-        needsModeSwitch = true;  // Signal display functions to do full redraw
+        needsModeSwitch = true;
         lastDisplayMode = displayMode;
         needsDisplayRefresh = true;
     }
 
     if (displayMode == MODE_KEYBOARD_BRIDGE) {
-        // BLE mode: Don't show display, just blink LED green
-        // Blink pattern: fast green blink every 100ms
+        // BLE mode: DO NOT TOUCH THE LCD AT ALL!
+        // ONLY blink LED green - nothing else!
         static unsigned long lastBlink = 0;
         static bool ledOn = false;
 
         if (getElapsedTime(lastBlink, millis()) >= 100) {
             ledOn = !ledOn;
             if (ledOn) {
-                setLed(0, 100, 0);  // Green ON
+                setLed(0, 100, 0);  // Green bright
             } else {
                 setLed(0, 30, 0);   // Green dim
             }
             lastBlink = millis();
         }
-        // No display update - just LED blink!
+        // NOTHING else - no LCD operations!
+        return;  // Exit immediately - don't do anything else
     } else {
-        // Mouse mover mode: Show full display
+        // Mouse mover mode: Show full display (update mouse screen)
         updateMouseMoverDisplay();
     }
 }
@@ -926,8 +840,7 @@ void loop() {
         Keyboard.releaseAll();
         keyCount++;
         lastCharTime = currentTime;
-
-        updateKeyCount();
+        // No display update for BLE mode - LED only
     }
 
     // Mouse mover logic (only in mouse mode and no text queued)
