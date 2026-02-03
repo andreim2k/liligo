@@ -116,7 +116,11 @@ uint32_t keyCount = 0;
 String lastText = "";
 
 // Text queue for async processing (prevents BLE callback blocking)
-String textQueue = "";
+// Use circular buffer instead of String to avoid heap fragmentation
+const size_t MAX_QUEUE_SIZE = 4096;  // 4KB buffer
+char textQueueBuffer[MAX_QUEUE_SIZE];
+size_t queueStart = 0;
+size_t queueEnd = 0;
 unsigned long lastCharTime = 0;
 const unsigned long CHAR_INTERVAL = 2;  // 2ms between chars for reliable typing
 
@@ -363,8 +367,20 @@ class TextCharCallbacks : public BLECharacteristicCallbacks {
 
         // Queue text for async processing in main loop
         // This prevents BLE callback from blocking during long typing sessions
-        textQueue += buffer;
         lastText = buffer;
+
+        // Add chars to circular buffer queue
+        size_t chars_added = 0;
+        for (size_t i = 0; i < buffer.length(); i++) {
+            size_t next = (queueEnd + 1) % MAX_QUEUE_SIZE;
+            if (next != queueStart) {  // Don't overwrite unprocessed chars
+                textQueueBuffer[queueEnd] = buffer[i];
+                queueEnd = next;
+                chars_added++;
+            } else {
+                break;  // Buffer full
+            }
+        }
 
         // Update display
         lcd.setTextColor(COLOR_KEY, COLOR_BG);
@@ -373,7 +389,8 @@ class TextCharCallbacks : public BLECharacteristicCallbacks {
         lcd.print(display);
         lcd.print("          ");  // Clear rest of line
 
-        Serial.printf("Text queued: %d chars (queue size: %d)\n", buffer.length(), textQueue.length());
+        size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
+        Serial.printf("Text queued: %d chars (queue: %d/%d)\n", chars_added, queue_size, MAX_QUEUE_SIZE);
     }
 };
 
@@ -821,9 +838,9 @@ void loop() {
 
     // Process queued text asynchronously (character by character with delays)
     // This keeps BLE responsive while typing
-    if (textQueue.length() > 0 && getElapsedTime(lastCharTime, currentTime) >= CHAR_INTERVAL) {
-        char c = textQueue[0];
-        textQueue = textQueue.substring(1);  // Remove first char
+    if (queueStart != queueEnd && getElapsedTime(lastCharTime, currentTime) >= CHAR_INTERVAL) {
+        char c = textQueueBuffer[queueStart];
+        queueStart = (queueStart + 1) % MAX_QUEUE_SIZE;
 
         Keyboard.press(c);
         Keyboard.releaseAll();
@@ -834,7 +851,7 @@ void loop() {
     }
 
     // Mouse mover logic (only in mouse mode and no text queued)
-    if (currentMode == MODE_MOUSE_MOVER && textQueue.length() == 0) {
+    if (currentMode == MODE_MOUSE_MOVER && queueStart == queueEnd) {
         if (getElapsedTime(lastMoveTime, currentTime) >= nextMoveDelay) {
             moveMouse();
             lastMoveTime = currentTime;
