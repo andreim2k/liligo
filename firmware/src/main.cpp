@@ -388,8 +388,15 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
         if (value.length() == 0)
             return;
 
-        // Build clean buffer, filtering out invalid UTF-8 and control chars
-        String buffer = "";
+        // IMPORTANT: Do NOT use String class - it causes heap fragmentation!
+        // Filter and queue directly from BLE data to circular buffer
+
+        // Use local copies of volatile pointers for consistency
+        size_t localQueueStart = queueStart;
+        size_t localQueueEnd = queueEnd;
+        size_t chars_added = 0;
+
+        // Process and queue directly in one pass (no intermediate String buffer)
         for (size_t i = 0; i < value.length(); i++)
         {
             uint8_t c = (uint8_t)value[i];
@@ -403,63 +410,45 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
                     i += 2;
                 else if ((c & 0xF8) == 0xF0)
                     i += 3;
-                continue;
+                continue;  // Skip this byte, continue to next
             }
 
             // Skip carriage return
             if (c == '\r')
                 continue;
 
-            // Add valid ASCII characters
+            // Queue valid ASCII characters
             if (c == '\n' || c == '\t' || (c >= 0x20 && c <= 0x7E))
             {
-                buffer += (char)c;
-            }
-        }
+                size_t next = (localQueueEnd + 1) % MAX_QUEUE_SIZE;
 
-        if (buffer.length() == 0)
-            return;
-
-        // Queue text for async processing in main loop
-        // This prevents BLE callback from blocking during long typing sessions
-        lastText = buffer;
-
-        // Add chars to circular buffer queue (NON-BLOCKING)
-        // Never block in BLE callback - it corrupts the BLE stack!
-        // Just queue what we can, let main loop consume at its pace
-        // Use local copies of volatile pointers for consistency
-        size_t localQueueStart = queueStart;
-        size_t localQueueEnd = queueEnd;
-        size_t chars_added = 0;
-
-        for (size_t i = 0; i < buffer.length(); i++)
-        {
-            size_t next = (localQueueEnd + 1) % MAX_QUEUE_SIZE;
-
-            // Only add if space available (non-blocking check only)
-            if (next != localQueueStart)
-            {
-                textQueueBuffer[localQueueEnd] = buffer[i];
-                localQueueEnd = next;
-                chars_added++;
-            }
-            else
-            {
-                // Buffer full - can't add more this time
-                // Client should resend or wait, but DON'T BLOCK HERE!
-                if (i == 0)
+                // Only add if space available (non-blocking check only)
+                if (next != localQueueStart)
                 {
-                    Serial.printf("WARNING: Queue full, couldn't queue text\n");
+                    textQueueBuffer[localQueueEnd] = (char)c;
+                    localQueueEnd = next;
+                    chars_added++;
                 }
-                break;
+                else
+                {
+                    // Buffer full - can't add more
+                    if (chars_added == 0)
+                    {
+                        Serial.printf("WARNING: Queue full, couldn't queue text\n");
+                    }
+                    break;
+                }
             }
         }
 
-        // Update the actual volatile pointers after processing
+        // Update the actual volatile pointers only once after processing
         queueEnd = localQueueEnd;
 
         size_t queue_size = (localQueueEnd >= localQueueStart) ? (localQueueEnd - localQueueStart) : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
-        Serial.printf("Text queued: %d/%d chars (queue: %d/%d)\n", chars_added, buffer.length(), queue_size, MAX_QUEUE_SIZE);
+        if (chars_added > 0)
+        {
+            Serial.printf("Text queued: %d chars (queue: %d/%d)\n", chars_added, queue_size, MAX_QUEUE_SIZE);
+        }
     }
 };
 
