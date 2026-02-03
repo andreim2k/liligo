@@ -129,6 +129,7 @@ const size_t MAX_QUEUE_SIZE = 65536; // 64KB buffer - with flow control, support
 char textQueueBuffer[MAX_QUEUE_SIZE];
 volatile size_t queueStart = 0;  // VOLATILE: accessed by both BLE callback and main loop
 volatile size_t queueEnd = 0;    // VOLATILE: prevents compiler register caching
+volatile size_t peakQueueSize = 0;  // Track max queue size for progress bar
 unsigned long lastCharTime = 0;
 const unsigned long CHAR_INTERVAL = 10; // 10ms between chars - slower but more stable for large pastes
 
@@ -158,38 +159,6 @@ void setLed(uint8_t r, uint8_t g, uint8_t b)
 {
     ledColors[0] = rgb_color{r, g, b};
     ledStrip.write(ledColors, 1);
-}
-
-// Convert HSV to RGB and set LED (hue: 0-360, sat: 0-255, val: 0-255)
-void setLedHSV(uint16_t hue, uint8_t sat, uint8_t val)
-{
-    // Normalize hue to 0-359
-    hue = hue % 360;
-
-    // Convert HSV to RGB
-    float h = hue / 60.0;
-    float s = sat / 255.0;
-    float v = val / 255.0;
-
-    uint8_t i = (uint8_t)h;
-    float f = h - i;
-
-    uint8_t p = (uint8_t)(v * (1.0 - s) * 255);
-    uint8_t q = (uint8_t)(v * (1.0 - f * s) * 255);
-    uint8_t t = (uint8_t)(v * (1.0 - (1.0 - f) * s) * 255);
-    uint8_t vv = (uint8_t)(v * 255);
-
-    uint8_t r, g, b;
-    switch (i % 6) {
-        case 0: r = vv; g = t;  b = p;  break;
-        case 1: r = q;  g = vv; b = p;  break;
-        case 2: r = p;  g = vv; b = t;  break;
-        case 3: r = p;  g = q;  b = vv; break;
-        case 4: r = t;  g = p;  b = vv; break;
-        default: r = vv; g = p;  b = q;  break;
-    }
-
-    setLed(r, g, b);
 }
 
 // Forward declarations
@@ -847,7 +816,108 @@ void updateMouseMoverDisplay()
     }
 }
 
-// BLE Display - REMOVED: BLE mode uses ONLY LED, no display
+/**
+ * Display BLE typing progress bar
+ */
+void updateBLEDisplay()
+{
+    static unsigned long lastUpdate = 0;
+
+    // Update every 100ms for smooth animation
+    if (getElapsedTime(lastUpdate, millis()) < 100)
+        return;
+    lastUpdate = millis();
+
+    // Get current queue status
+    size_t localQueueStart = queueStart;
+    size_t localQueueEnd = queueEnd;
+    size_t currentQueueSize = (localQueueEnd >= localQueueStart)
+        ? (localQueueEnd - localQueueStart)
+        : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
+
+    // Calculate progress (how much has been consumed)
+    float progress = 0.0;
+    if (peakQueueSize > 0)
+    {
+        size_t remaining = currentQueueSize;
+        size_t consumed = peakQueueSize - remaining;
+        progress = (float)consumed / (float)peakQueueSize;
+        if (progress > 1.0) progress = 1.0;
+    }
+
+    int dispWidth = lcd.width();
+    int dispHeight = lcd.height();
+
+    // Draw title
+    lcd.setTextSize(1);
+    lcd.setTextColor(COLOR_ACCENT);
+    lcd.setCursor(5, 20);
+    lcd.print("BLE TYPING");
+
+    // Draw progress bar
+    int barX = 5;
+    int barY = 35;
+    int barWidth = dispWidth - 10;
+    int barHeight = 12;
+
+    // Background
+    lcd.fillRect(barX, barY, barWidth, barHeight, COLOR_PANEL);
+    lcd.drawRect(barX, barY, barWidth, barHeight, COLOR_ACCENT);
+
+    // Progress fill (left to right)
+    int fillWidth = (int)((barWidth - 2) * progress);
+    if (fillWidth > 0)
+    {
+        // Color gradient based on progress
+        uint16_t fillColor = COLOR_SUCCESS;  // Green by default
+        if (progress < 0.5)
+            fillColor = COLOR_WARNING;  // Orange for early progress
+        else if (progress > 0.9)
+            fillColor = COLOR_SUCCESS;  // Green near completion
+
+        lcd.fillRect(barX + 1, barY + 1, fillWidth, barHeight - 2, fillColor);
+    }
+
+    // Stats text
+    lcd.setTextColor(COLOR_DIM);
+    lcd.setTextSize(1);
+    lcd.setCursor(5, 52);
+    lcd.print("Progress:");
+
+    // Percentage
+    lcd.setTextColor(COLOR_TEXT);
+    lcd.setCursor(50, 52);
+    char progText[16];
+    sprintf(progText, "%d%%", (int)(progress * 100));
+    lcd.print(progText);
+
+    // Queue status
+    lcd.setTextColor(COLOR_DIM);
+    lcd.setCursor(5, 65);
+    lcd.print("Queue:");
+
+    lcd.setTextColor(COLOR_TEXT);
+    lcd.setCursor(40, 65);
+    char queueText[24];
+    sprintf(queueText, "%d/%d bytes", currentQueueSize, peakQueueSize);
+    lcd.print(queueText);
+
+    // Typing speed indicator
+    lcd.setTextColor(COLOR_DIM);
+    lcd.setCursor(5, 78);
+    lcd.print("Typing...");
+
+    // Estimated time remaining
+    if (currentQueueSize > 0 && CHAR_INTERVAL > 0)
+    {
+        unsigned long remainingSecs = (currentQueueSize * CHAR_INTERVAL) / 1000;
+        lcd.setTextColor(COLOR_TEXT);
+        lcd.setCursor(5, 95);
+        char timeText[24];
+        sprintf(timeText, "ETA: %lu sec", remainingSecs);
+        lcd.print(timeText);
+    }
+}
 
 /**
  * Main display update dispatcher
@@ -865,32 +935,51 @@ void updateDisplay()
         lastDisplayMode = displayMode;
         needsDisplayRefresh = true;
 
-        // When switching TO or FROM BLE: COMPLETELY clear display
-        if (displayMode == MODE_MOUSE_MOVER)
+        if (displayMode == MODE_KEYBOARD_BRIDGE)
+        {
+            // Entering BLE mode: clear display for progress bar
+            lcd.fillScreen(COLOR_BG);
+            delay(1);
+            lcd.fillScreen(COLOR_BG);
+            peakQueueSize = 0;  // Reset peak for new paste session
+        }
+        else if (displayMode == MODE_MOUSE_MOVER)
         {
             // Exiting BLE mode: clear display and reset LED
             lcd.fillScreen(COLOR_BG);
             delay(1);
             lcd.fillScreen(COLOR_BG);
             setLed(0, 50, 0); // Reset LED to mouse mover green
+            peakQueueSize = 0;  // Reset peak
         }
     }
 
     if (displayMode == MODE_KEYBOARD_BRIDGE)
     {
-        // BLE mode: DO NOT TOUCH THE LCD AT ALL!
-        // Rainbow color cycling LED - smooth spectrum transition
-        static unsigned long rainbowStart = 0;
-        const unsigned long RAINBOW_CYCLE_MS = 5000; // Full spectrum in 5 seconds
+        // BLE mode: Display typing progress on LCD
 
-        unsigned long elapsedMs = getElapsedTime(rainbowStart, millis());
-        uint16_t hue = (elapsedMs % RAINBOW_CYCLE_MS) * 360 / RAINBOW_CYCLE_MS;
+        // Track peak queue size for progress calculation
+        size_t localQueueStart = queueStart;
+        size_t localQueueEnd = queueEnd;
+        size_t currentQueueSize = (localQueueEnd >= localQueueStart)
+            ? (localQueueEnd - localQueueStart)
+            : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
 
-        // Smooth rainbow with vibrant saturation and brightness
-        setLedHSV(hue, 255, 200); // Full saturation, high brightness
+        if (currentQueueSize > peakQueueSize)
+        {
+            peakQueueSize = currentQueueSize;
+        }
 
-        // NOTHING else - no LCD operations!
-        return; // Exit immediately - don't do anything else
+        // Show progress bar on LCD
+        updateBLEDisplay();
+
+        // Reset peak when queue is empty (typing finished)
+        if (currentQueueSize == 0)
+        {
+            peakQueueSize = 0;
+        }
+
+        return; // Exit immediately after BLE display
     }
     else
     {
