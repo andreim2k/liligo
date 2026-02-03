@@ -743,25 +743,24 @@ void updateMouseMoverDisplay() {
 void updateKeyBridgeDisplay() {
     static bool needsFullRedraw = true;
     static uint32_t lastKeyCount = 0;
+    bool isTyping = (queueStart != queueEnd);
 
     // COMPLETE CLEAR + REDRAW on mode switch
     if (needsModeSwitch) {
         lcd.fillScreen(COLOR_BG);  // Complete clear
         needsFullRedraw = true;
+        needsModeSwitch = false;
     }
 
-    // Force full redraw if display refresh is needed
-    if (needsFullRedraw || needsDisplayRefresh) {
-        lcd.fillScreen(COLOR_BG);  // COMPLETELY CLEAR
+    // Always redraw when typing or on refresh
+    if (needsFullRedraw || needsDisplayRefresh || isTyping) {
+        if (needsFullRedraw || needsDisplayRefresh || needsModeSwitch) {
+            lcd.fillScreen(COLOR_BG);  // COMPLETELY CLEAR
+        }
         showKeyBridgeStatus("Connected", COLOR_SUCCESS);  // THEN DRAW
         needsFullRedraw = false;
         needsDisplayRefresh = false;
         lastKeyCount = keyCount;
-    }
-
-    // Clear mode switch flag
-    if (needsModeSwitch) {
-        needsModeSwitch = false;
     }
 
     // Update key count if changed
