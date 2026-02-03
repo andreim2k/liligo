@@ -714,9 +714,15 @@ void updateDisplay() {
         lastDisplayMode = displayMode;
         needsDisplayRefresh = true;
 
-        // When switching FROM BLE TO mouse: clear display and reset LED
-        if (displayMode == MODE_MOUSE_MOVER) {
-            lcd.fillScreen(COLOR_BG);  // COMPLETELY clear display
+        // When switching TO or FROM BLE: COMPLETELY clear display
+        if (displayMode == MODE_KEYBOARD_BRIDGE) {
+            // Entering BLE mode: clear all text from bottom
+            lcd.fillScreen(COLOR_BG);
+            delay(1);
+            lcd.fillScreen(COLOR_BG);
+        } else if (displayMode == MODE_MOUSE_MOVER) {
+            // Exiting BLE mode: clear display and reset LED
+            lcd.fillScreen(COLOR_BG);
             delay(1);
             lcd.fillScreen(COLOR_BG);
             setLed(0, 50, 0);  // Reset LED to mouse mover green
