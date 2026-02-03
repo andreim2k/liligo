@@ -697,11 +697,12 @@ void updateMouseMoverDisplay() {
     }
 
     // Full redraw on first run or after mode switch
-    if (needsFullRedraw || needsDisplayRefresh) {
+    if (needsFullRedraw || needsDisplayRefresh || needsModeSwitch) {
         lcd.fillScreen(COLOR_BG);
         drawMouseMoverHeader();
         needsFullRedraw = false;
         needsDisplayRefresh = false;
+        needsModeSwitch = false;
         lastUptimeSeconds = uptimeSeconds;
         lastTimeUntilMove = timeUntilMove;
         lastMoveCount = moveCount;
@@ -733,10 +734,12 @@ void updateKeyBridgeDisplay() {
     static bool needsFullRedraw = true;
     static uint32_t lastKeyCount = 0;
 
-    if (needsFullRedraw || needsDisplayRefresh) {
+    // Force full redraw if display refresh is needed or mode switch happened
+    if (needsFullRedraw || needsDisplayRefresh || needsModeSwitch) {
         showKeyBridgeStatus("Connected", COLOR_SUCCESS);
         needsFullRedraw = false;
         needsDisplayRefresh = false;
+        needsModeSwitch = false;
         lastKeyCount = keyCount;
     }
 
@@ -755,10 +758,9 @@ void updateDisplay() {
     bool isTyping = (queueStart != queueEnd);
     OperatingMode displayMode = (isTyping || currentMode == MODE_KEYBOARD_BRIDGE) ? MODE_KEYBOARD_BRIDGE : MODE_MOUSE_MOVER;
 
-    // Detect mode switch and force full screen clear
+    // Detect mode switch and signal full redraw needed
     if (displayMode != lastDisplayMode) {
-        lcd.fillScreen(COLOR_BG);  // Complete screen clear
-        needsModeSwitch = true;
+        needsModeSwitch = true;  // Signal display functions to do full redraw
         lastDisplayMode = displayMode;
         needsDisplayRefresh = true;
     }
