@@ -696,16 +696,26 @@ void updateMouseMoverDisplay() {
         timeUntilMove = (nextMoveDelay - elapsedSinceLastMove) / 1000;
     }
 
+    // COMPLETE CLEAR + REDRAW on mode switch
+    if (needsModeSwitch) {
+        lcd.fillScreen(COLOR_BG);  // Complete clear
+        needsFullRedraw = true;
+    }
+
     // Full redraw on first run or after mode switch
-    if (needsFullRedraw || needsDisplayRefresh || needsModeSwitch) {
-        lcd.fillScreen(COLOR_BG);
-        drawMouseMoverHeader();
+    if (needsFullRedraw || needsDisplayRefresh) {
+        lcd.fillScreen(COLOR_BG);  // COMPLETELY CLEAR
+        drawMouseMoverHeader();  // THEN DRAW
         needsFullRedraw = false;
         needsDisplayRefresh = false;
-        needsModeSwitch = false;
         lastUptimeSeconds = uptimeSeconds;
         lastTimeUntilMove = timeUntilMove;
         lastMoveCount = moveCount;
+    }
+
+    // Clear mode switch flag
+    if (needsModeSwitch) {
+        needsModeSwitch = false;
     }
 
     // Update uptime panel
@@ -734,13 +744,24 @@ void updateKeyBridgeDisplay() {
     static bool needsFullRedraw = true;
     static uint32_t lastKeyCount = 0;
 
-    // Force full redraw if display refresh is needed or mode switch happened
-    if (needsFullRedraw || needsDisplayRefresh || needsModeSwitch) {
-        showKeyBridgeStatus("Connected", COLOR_SUCCESS);
+    // COMPLETE CLEAR + REDRAW on mode switch
+    if (needsModeSwitch) {
+        lcd.fillScreen(COLOR_BG);  // Complete clear
+        needsFullRedraw = true;
+    }
+
+    // Force full redraw if display refresh is needed
+    if (needsFullRedraw || needsDisplayRefresh) {
+        lcd.fillScreen(COLOR_BG);  // COMPLETELY CLEAR
+        showKeyBridgeStatus("Connected", COLOR_SUCCESS);  // THEN DRAW
         needsFullRedraw = false;
         needsDisplayRefresh = false;
-        needsModeSwitch = false;
         lastKeyCount = keyCount;
+    }
+
+    // Clear mode switch flag
+    if (needsModeSwitch) {
+        needsModeSwitch = false;
     }
 
     // Update key count if changed
