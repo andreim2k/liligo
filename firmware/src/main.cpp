@@ -160,6 +160,38 @@ void setLed(uint8_t r, uint8_t g, uint8_t b)
     ledStrip.write(ledColors, 1);
 }
 
+// Convert HSV to RGB and set LED (hue: 0-360, sat: 0-255, val: 0-255)
+void setLedHSV(uint16_t hue, uint8_t sat, uint8_t val)
+{
+    // Normalize hue to 0-359
+    hue = hue % 360;
+
+    // Convert HSV to RGB
+    float h = hue / 60.0;
+    float s = sat / 255.0;
+    float v = val / 255.0;
+
+    uint8_t i = (uint8_t)h;
+    float f = h - i;
+
+    uint8_t p = (uint8_t)(v * (1.0 - s) * 255);
+    uint8_t q = (uint8_t)(v * (1.0 - f * s) * 255);
+    uint8_t t = (uint8_t)(v * (1.0 - (1.0 - f) * s) * 255);
+    uint8_t vv = (uint8_t)(v * 255);
+
+    uint8_t r, g, b;
+    switch (i % 6) {
+        case 0: r = vv; g = t;  b = p;  break;
+        case 1: r = q;  g = vv; b = p;  break;
+        case 2: r = p;  g = vv; b = t;  break;
+        case 3: r = p;  g = q;  b = vv; break;
+        case 4: r = t;  g = p;  b = vv; break;
+        default: r = vv; g = p;  b = q;  break;
+    }
+
+    setLed(r, g, b);
+}
+
 // Forward declarations
 unsigned long getElapsedTime(unsigned long start, unsigned long current);
 unsigned long getRandomDelay();
@@ -847,23 +879,16 @@ void updateDisplay()
     if (displayMode == MODE_KEYBOARD_BRIDGE)
     {
         // BLE mode: DO NOT TOUCH THE LCD AT ALL!
-        // ONLY blink LED green - nothing else!
-        static unsigned long lastBlink = 0;
-        static bool ledOn = false;
+        // Rainbow color cycling LED - smooth spectrum transition
+        static unsigned long rainbowStart = 0;
+        const unsigned long RAINBOW_CYCLE_MS = 5000; // Full spectrum in 5 seconds
 
-        if (getElapsedTime(lastBlink, millis()) >= 100)
-        {
-            ledOn = !ledOn;
-            if (ledOn)
-            {
-                setLed(0, 100, 0); // Green bright
-            }
-            else
-            {
-                setLed(0, 30, 0); // Green dim
-            }
-            lastBlink = millis();
-        }
+        unsigned long elapsedMs = getElapsedTime(rainbowStart, millis());
+        uint16_t hue = (elapsedMs % RAINBOW_CYCLE_MS) * 360 / RAINBOW_CYCLE_MS;
+
+        // Smooth rainbow with vibrant saturation and brightness
+        setLedHSV(hue, 255, 200); // Full saturation, high brightness
+
         // NOTHING else - no LCD operations!
         return; // Exit immediately - don't do anything else
     }
