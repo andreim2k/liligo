@@ -878,20 +878,24 @@ void updateBLEDisplay()
         lcd.fillRect(barX + 1, barY + 1, fillWidth, barHeight - 2, fillColor);
     }
 
-    // Stats text
+    // Stats text - clear character areas before drawing
+
+    // Progress line - clear only the percentage area (where numbers go)
+    lcd.fillRect(48, 50, 32, 10, COLOR_BG);
     lcd.setTextColor(COLOR_DIM);
     lcd.setTextSize(1);
     lcd.setCursor(5, 52);
     lcd.print("Progress:");
 
-    // Percentage
+    // Percentage - cleared before writing
     lcd.setTextColor(COLOR_TEXT);
     lcd.setCursor(50, 52);
     char progText[16];
     sprintf(progText, "%d%%", (int)(progress * 100));
     lcd.print(progText);
 
-    // Queue status
+    // Queue status line - clear only the queue data area
+    lcd.fillRect(38, 63, 42, 10, COLOR_BG);
     lcd.setTextColor(COLOR_DIM);
     lcd.setCursor(5, 65);
     lcd.print("Queue:");
@@ -902,12 +906,14 @@ void updateBLEDisplay()
     sprintf(queueText, "%d/%d bytes", currentQueueSize, peakQueueSize);
     lcd.print(queueText);
 
-    // Typing speed indicator
+    // Typing speed indicator - clear and redraw
+    lcd.fillRect(5, 76, 70, 10, COLOR_BG);
     lcd.setTextColor(COLOR_DIM);
     lcd.setCursor(5, 78);
     lcd.print("Typing...");
 
-    // Estimated time remaining
+    // Estimated time remaining - clear and redraw
+    lcd.fillRect(5, 93, 75, 10, COLOR_BG);
     if (currentQueueSize > 0 && CHAR_INTERVAL > 0)
     {
         unsigned long remainingSecs = (currentQueueSize * CHAR_INTERVAL) / 1000;
@@ -916,6 +922,13 @@ void updateBLEDisplay()
         char timeText[24];
         sprintf(timeText, "ETA: %lu sec", remainingSecs);
         lcd.print(timeText);
+    }
+    else
+    {
+        // When queue is empty, show done message
+        lcd.setTextColor(COLOR_SUCCESS);
+        lcd.setCursor(5, 95);
+        lcd.print("Done!");
     }
 }
 
