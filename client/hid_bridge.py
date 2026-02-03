@@ -22,10 +22,11 @@ def get_clipboard():
     """Get clipboard content on macOS, preserving all formatting."""
     try:
         # Use text=False to get raw bytes, then decode to preserve all chars
-        result = subprocess.run(['pbpaste'], capture_output=True, text=False)
+        result = subprocess.run(['pbpaste'], capture_output=True, text=False, timeout=2)
         # Decode as UTF-8, preserving newlines and special chars
         return result.stdout.decode('utf-8', errors='replace')
-    except:
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        print(f"Warning: Failed to get clipboard: {e}")
         return None
 
 
@@ -40,7 +41,8 @@ def is_binary_file(file_path: str, sample_size: int = 8192) -> bool:
             text_chars = bytearray({7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)))
             non_text = sum(1 for b in chunk if b not in text_chars)
             return non_text / len(chunk) > 0.30 if chunk else False
-    except:
+    except (OSError, IOError) as e:
+        print(f"Warning: Could not check if file is binary: {e}")
         return True
 
 
@@ -61,7 +63,7 @@ def read_text_file(file_path: str) -> Optional[str]:
     try:
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             return f.read()
-    except Exception as e:
+    except (OSError, IOError, UnicodeDecodeError) as e:
         print(f"Error reading file: {e}")
         return None
 
@@ -188,17 +190,24 @@ class KeyBridgeClient:
             # Send one character at a time (for debugging)
             print(f"SLOW MODE: Sending {len(encoded)} bytes one at a time...")
             for i, byte in enumerate(encoded):
-                c = chr(byte) if 32 <= byte < 127 else f'\\x{byte:02x}'
+                c = chr(byte) if 32 <= byte < 127 else f'[{byte:02x}]'
                 print(f"  [{i}] Sending byte {byte:02x} ({c})")
                 await self.client.write_gatt_char(CHAR_TEXT_UUID, bytes([byte]), response=True)
                 await asyncio.sleep(0.05)  # 50ms between chars for visibility
         else:
             # Send in chunks with acknowledgment for reliability
             total_chunks = (len(encoded) + self.chunk_size - 1) // self.chunk_size
-            print(f"Sending {len(encoded)} bytes in {total_chunks} chunks...")
+            print(f"Sending {len(encoded)} bytes in {total_chunks} chunks (chunk_size={self.chunk_size})...")
             for i in range(0, len(encoded), self.chunk_size):
                 chunk = encoded[i:i + self.chunk_size]
                 await self.client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
+
+                # Add delay between chunks for large pastes to prevent buffer overflow
+                # Device processes at ~1KB/s, so small delays help
+                if len(encoded) > 1000:
+                    await asyncio.sleep(0.005)  # 5ms delay for large pastes
+                elif len(encoded) > 500:
+                    await asyncio.sleep(0.002)  # 2ms delay for medium pastes
 
         print(f"Sent {len(text)} characters ({len(encoded)} bytes)")
 
@@ -320,11 +329,11 @@ class KeyBridgeClient:
                     return
 
                 if char:
-                    # Check if it's a shifted character
+                    # Preserve existing modifiers and add shift if needed
                     current_mods = modifiers
                     if char in SHIFT_CHARS:
                         base_char = SHIFT_CHARS[char]
-                        current_mods |= MOD_LSHIFT
+                        current_mods |= MOD_LSHIFT  # Add shift, preserving other mods
                         char = base_char
 
                     # Look up HID keycode
@@ -332,7 +341,7 @@ class KeyBridgeClient:
                     keycode = MAC_KEY_TO_HID.get(char_lower, 0)
 
                     if keycode:
-                        # Queue the key event
+                        # Queue the key event with preserved modifiers
                         self.key_queue.put_nowait((current_mods, keycode))
 
             except Exception as e:
@@ -430,9 +439,16 @@ class KeyBridgeClient:
 
     async def save_file_windows(self, content: str, filename: str):
         """
-        Save text file on Windows using PowerShell.
+        Save text file on Windows using PowerShell with proper escaping.
         """
+        import shlex
+
         print("Opening PowerShell on Windows...")
+
+        # Sanitize filename - only allow alphanumerics, dash, underscore, dot
+        safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_')
+        if not safe_filename:
+            safe_filename = "untitled.txt"
 
         # Win+R to open Run dialog
         await self.send_key_combo('gui', 'r')
@@ -443,29 +459,33 @@ class KeyBridgeClient:
         await self.send_key_combo(0x28)  # Enter
         await asyncio.sleep(1.0)  # Wait for PowerShell to open
 
-        # Escape any single quotes in content
-        escaped_content = content.replace("'", "''")
+        # Use -EncodedCommand with Base64 to avoid escaping issues
+        import base64
+        ps_cmd = f"$content = @'\n{content}\n'@; Set-Content -Path \"$HOME\\Documents\\{safe_filename}\" -Value $content -Encoding UTF8"
 
-        # Build PowerShell command
-        print(f"Saving {filename} ({len(content)} chars)...")
-        cmd = f"Set-Content -Path $HOME\\Documents\\{filename} -Value '"
+        encoded_cmd = base64.b64encode(ps_cmd.encode('utf-16-le')).decode('ascii')
+
+        print(f"Saving {safe_filename} ({len(content)} chars)...")
+        cmd = f"powershell -EncodedCommand {encoded_cmd}"
         await self.send_keys(cmd)
-        await self.send_text(escaped_content)
-        await self.send_keys("'")
         await self.send_key_combo(0x28)  # Enter
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.5)
 
-        # Exit PowerShell
-        await self.send_keys("exit")
-        await self.send_key_combo(0x28)  # Enter
-        print(f"Saved to Documents\\{filename}")
+        print(f"Saved to Documents\\{safe_filename}")
 
     async def save_binary_windows(self, data: bytes, filename: str):
         """
-        Save binary file on Windows using certutil (works in Constrained Language Mode).
+        Save binary file on Windows using PowerShell with proper encoding.
         """
         import base64
+
+        # Sanitize filename - only allow alphanumerics, dash, underscore, dot
+        safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_')
+        if not safe_filename:
+            safe_filename = "file.bin"
+
         b64_data = base64.b64encode(data).decode('ascii')
+        print(f"Saving {safe_filename} ({len(data)} bytes as {len(b64_data)} base64 chars)...")
 
         print("Opening PowerShell on Windows...")
 
@@ -478,69 +498,80 @@ class KeyBridgeClient:
         await self.send_key_combo(0x28)  # Enter
         await asyncio.sleep(1.0)  # Wait for PowerShell to open
 
-        print(f"Saving {filename} ({len(data)} bytes as {len(b64_data)} base64 chars)...")
+        # Build PowerShell command using -EncodedCommand with base64
+        ps_cmd = f"[System.IO.File]::WriteAllBytes([System.IO.Path]::Combine($HOME, 'Documents', '{safe_filename}'), [System.Convert]::FromBase64String('{b64_data}'))"
+        encoded_cmd = base64.b64encode(ps_cmd.encode('utf-16-le')).decode('ascii')
 
-        # Use certutil to decode base64 (works in Constrained Language Mode)
-        temp_b64 = f"$env:TEMP\\temp_{filename}.b64"
-
-        # Write base64 to temp file
-        await self.send_keys(f"echo ")
-        await self.send_text(b64_data)
-        await self.send_keys(f" > {temp_b64}")
-        await self.send_key_combo(0x28)  # Enter
-        await asyncio.sleep(0.3)
-
-        # Decode with certutil
-        await self.send_keys(f"certutil -decode {temp_b64} $HOME\\Documents\\{filename}")
+        cmd = f"powershell -EncodedCommand {encoded_cmd}"
+        await self.send_keys(cmd)
         await self.send_key_combo(0x28)  # Enter
         await asyncio.sleep(0.5)
 
-        # Clean up temp file
-        await self.send_keys(f"del {temp_b64}")
-        await self.send_key_combo(0x28)  # Enter
-        await asyncio.sleep(0.2)
-
-        # Exit PowerShell
-        await self.send_keys("exit")
-        await self.send_key_combo(0x28)  # Enter
-        print(f"Saved to Documents\\{filename}")
+        print(f"Saved to Documents\\{safe_filename}")
 
     async def save_file_linux(self, content: str, filename: str):
         """
-        Save text file on Linux using cat heredoc.
+        Save text file on Linux using cat heredoc with safe delimiter.
         """
-        print(f"Saving {filename} on Linux...")
+        import time
 
-        # Use cat with heredoc to write file
-        await self.send_keys(f"cat > {filename} << 'ENDOFFILE'")
+        # Sanitize filename - only allow safe characters
+        safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_/')
+        if not safe_filename or safe_filename.startswith('/'):
+            safe_filename = "untitled.txt"
+
+        print(f"Saving {safe_filename} on Linux...")
+
+        # Use unique delimiter to avoid conflicts with content
+        delimiter = f"EOF_{int(time.time() * 1000)}"
+
+        # Use cat with heredoc (single quotes prevent expansion)
+        await self.send_keys(f"cat > {safe_filename} << '{delimiter}'")
         await self.send_key_combo(0x28)  # Enter
         await asyncio.sleep(0.1)
 
         # Type the content
         await self.send_text(content)
 
-        # End heredoc
+        # End heredoc with unique delimiter
         await self.send_key_combo(0x28)  # Enter
-        await self.send_keys("ENDOFFILE")
+        await self.send_keys(delimiter)
         await self.send_key_combo(0x28)  # Enter
-        print(f"Saved to {filename}")
+        print(f"Saved to {safe_filename}")
 
     async def save_binary_linux(self, data: bytes, filename: str):
         """
-        Save binary file on Linux using base64.
+        Save binary file on Linux using base64 with safe filename handling.
         """
         import base64
+        import time
+
+        # Sanitize filename - only allow safe characters
+        safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_/')
+        if not safe_filename or safe_filename.startswith('/'):
+            safe_filename = "file.bin"
+
         b64_data = base64.b64encode(data).decode('ascii')
 
-        print(f"Saving {filename} on Linux ({len(data)} bytes as {len(b64_data)} base64 chars)...")
+        print(f"Saving {safe_filename} on Linux ({len(data)} bytes as {len(b64_data)} base64 chars)...")
 
-        # Use echo with base64 decode
-        await self.send_keys(f"echo '")
+        # Use unique delimiter and safe filename
+        delimiter = f"EOF_{int(time.time() * 1000)}"
+
+        # Use cat with heredoc for base64 data (safer than echo)
+        await self.send_keys(f"cat << '{delimiter}' | base64 -d > {safe_filename}")
+        await self.send_key_combo(0x28)  # Enter
+        await asyncio.sleep(0.1)
+
+        # Send base64 data
         await self.send_text(b64_data)
-        await self.send_keys(f"' | base64 -d > {filename}")
+
+        # End heredoc
+        await self.send_key_combo(0x28)  # Enter
+        await self.send_keys(delimiter)
         await self.send_key_combo(0x28)  # Enter
         await asyncio.sleep(0.3)
-        print(f"Saved to {filename}")
+        print(f"Saved to {safe_filename}")
 
     async def disconnect(self):
         """Disconnect from the device."""

@@ -42,9 +42,9 @@ DEVICE_NAME = "KeyBridge"
 def get_clipboard():
     """Get clipboard content on macOS."""
     try:
-        result = subprocess.run(['pbpaste'], capture_output=True, text=False)
+        result = subprocess.run(['pbpaste'], capture_output=True, text=False, timeout=2)
         return result.stdout.decode('utf-8', errors='replace')
-    except:
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
 
 
@@ -54,9 +54,9 @@ def send_notification(title, subtitle, message):
         subprocess.run([
             'osascript', '-e',
             f'display notification "{message}" with title "{title}" subtitle "{subtitle}"'
-        ], capture_output=True)
-    except:
-        pass
+        ], capture_output=True, timeout=2)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass  # Silent fail - not critical
 
 
 class KeyBridgeDelegate(NSObject):
@@ -72,6 +72,7 @@ class KeyBridgeDelegate(NSObject):
         self.last_click_time = 0
         self.double_click_threshold = 0.4
         self.click_timer = None
+        self.event_monitor = None
 
         return self
 
@@ -159,7 +160,7 @@ class KeyBridgeDelegate(NSObject):
             return
 
         self.sending = True
-        self.status_item.setTitle_("⌨️⏳")
+        self._set_title("⌨️⏳")  # Use thread-safe method
 
         # Run async in BLE thread
         if self.loop:
@@ -194,6 +195,12 @@ class KeyBridgeDelegate(NSObject):
             for i in range(0, len(encoded), chunk_size):
                 chunk = encoded[i:i + chunk_size]
                 await client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
+
+                # Add delay between chunks for large pastes to prevent buffer overflow
+                if len(encoded) > 1000:
+                    await asyncio.sleep(0.005)  # 5ms delay for large pastes
+                elif len(encoded) > 500:
+                    await asyncio.sleep(0.002)  # 2ms delay for medium pastes
 
             send_notification("KeyBridge", "Sent", f"{len(text)} chars")
 
@@ -231,30 +238,42 @@ class KeyBridgeDelegate(NSObject):
     def _setup_global_hotkey(self):
         """Setup global hotkey Fn+Cmd+V to trigger send."""
         def handle_event(event):
-            # Check for Cmd+Fn+V (V keycode is 9)
+            # Check for Cmd+Fn+V using character interpretation (works on all layouts)
             flags = event.modifierFlags()
-            keycode = event.keyCode()
+            chars = event.characters()
 
-            # V key = 9, check for Cmd+Fn
-            is_cmd = flags & NSCommandKeyMask
-            is_fn = flags & NSFunctionKeyMask
+            # Check for Cmd+Fn modifiers and V character
+            is_cmd = (flags & NSCommandKeyMask) != 0
+            is_fn = (flags & NSFunctionKeyMask) != 0
 
-            if keycode == 9 and is_cmd and is_fn:
+            if is_cmd and is_fn and chars and chars.lower() == 'v':
                 self.sendClipboard_(None)
                 return None  # Consume the event
 
             return event
 
-        # Add global event monitor
-        NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+        # Add global event monitor and store reference to prevent garbage collection
+        self.event_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
             NSKeyDownMask,
             handle_event
         )
 
     def quitApp_(self, sender):
         """Quit the application."""
+        # Stop event monitor
+        if self.event_monitor:
+            NSEvent.removeMonitor_(self.event_monitor)
+            self.event_monitor = None
+
+        # Cancel any pending timer
+        if self.click_timer:
+            self.click_timer.invalidate()
+            self.click_timer = None
+
+        # Stop asyncio loop
         if self.loop:
             self.loop.call_soon_threadsafe(self.loop.stop)
+
         NSApplication.sharedApplication().terminate_(self)
 
 

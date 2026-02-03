@@ -330,47 +330,57 @@ class ServerCallbacks : public BLEServerCallbacks {
 class TextCharCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic* pCharacteristic) override {
         std::string value = pCharacteristic->getValue();
-        if (value.length() > 0) {
-            lastText = String(value.c_str());
+        if (value.length() == 0) return;
 
-            // Update display
-            lcd.setTextColor(COLOR_KEY, COLOR_BG);
-            lcd.setCursor(5, 60);
-            String display = lastText.substring(0, 12);
-            lcd.print(display);
-            lcd.print("    ");
+        // Build clean buffer, filtering out invalid UTF-8 and control chars
+        String buffer = "";
+        for (size_t i = 0; i < value.length(); i++) {
+            uint8_t c = (uint8_t)value[i];
 
-            // Fast bulk typing
-            String buffer = "";
-
-            for (size_t i = 0; i < value.length(); i++) {
-                uint8_t c = (uint8_t)value[i];
-
-                // Skip UTF-8 multi-byte sequences
-                if (c >= 0x80) {
-                    if ((c & 0xE0) == 0xC0) i += 1;
-                    else if ((c & 0xF0) == 0xE0) i += 2;
-                    else if ((c & 0xF8) == 0xF0) i += 3;
-                    continue;
-                }
-
-                // Skip carriage return
-                if (c == '\r') continue;
-
-                // Add valid characters to buffer
-                if (c == '\n' || c == '\t' || (c >= 0x20 && c <= 0x7E)) {
-                    buffer += (char)c;
-                }
+            // Skip UTF-8 multi-byte sequences (firmware doesn't support non-ASCII)
+            if (c >= 0x80) {
+                if ((c & 0xE0) == 0xC0) i += 1;
+                else if ((c & 0xF0) == 0xE0) i += 2;
+                else if ((c & 0xF8) == 0xF0) i += 3;
+                continue;
             }
 
-            // Print all at once
-            if (buffer.length() > 0) {
-                Keyboard.print(buffer);
-                keyCount += buffer.length();
-            }
+            // Skip carriage return
+            if (c == '\r') continue;
 
-            updateKeyCount();
+            // Add valid ASCII characters
+            if (c == '\n' || c == '\t' || (c >= 0x20 && c <= 0x7E)) {
+                buffer += (char)c;
+            }
         }
+
+        if (buffer.length() == 0) return;
+
+        // Store for display (only first 12 chars visible)
+        lastText = buffer;
+        lcd.setTextColor(COLOR_KEY, COLOR_BG);
+        lcd.setCursor(5, 60);
+        String display = buffer.substring(0, 12);
+        lcd.print(display);
+        lcd.print("          ");  // Clear rest of line
+
+        // Type in chunks with delays to prevent buffer overflow
+        // Send up to 32 chars at a time with small delay between chunks
+        const size_t CHUNK_SIZE = 32;
+        for (size_t i = 0; i < buffer.length(); i += CHUNK_SIZE) {
+            size_t chunk_len = (i + CHUNK_SIZE < buffer.length()) ? CHUNK_SIZE : (buffer.length() - i);
+            String chunk = buffer.substring(i, i + chunk_len);
+            Keyboard.print(chunk);
+            keyCount += chunk_len;
+
+            // Small delay between chunks for large pastes (helps USB HID stack)
+            if (buffer.length() > 100 && i + CHUNK_SIZE < buffer.length()) {
+                delay(2);  // 2ms between chunks for large pastes
+            }
+        }
+
+        updateKeyCount();
+        Serial.printf("Text received: %d chars\n", buffer.length());
     }
 };
 
@@ -378,11 +388,13 @@ class TextCharCallbacks : public BLECharacteristicCallbacks {
 class HidCharCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic* pCharacteristic) override {
         std::string value = pCharacteristic->getValue();
-        if (value.length() >= 2) {
-            uint8_t modifiers = (uint8_t)value[0];
-            uint8_t keycode = (uint8_t)value[1];
-            sendHidKey(modifiers, keycode);
+        if (value.length() < 2) {
+            Serial.printf("Error: HID write too short (%d bytes)\n", value.length());
+            return;
         }
+        uint8_t modifiers = (uint8_t)value[0];
+        uint8_t keycode = (uint8_t)value[1];
+        sendHidKey(modifiers, keycode);
     }
 };
 
