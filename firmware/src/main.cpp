@@ -130,7 +130,7 @@ char textQueueBuffer[MAX_QUEUE_SIZE];
 volatile size_t queueStart = 0;  // VOLATILE: accessed by both BLE callback and main loop
 volatile size_t queueEnd = 0;    // VOLATILE: prevents compiler register caching
 unsigned long lastCharTime = 0;
-const unsigned long CHAR_INTERVAL = 2; // 2ms between chars for reliable typing
+const unsigned long CHAR_INTERVAL = 10; // 10ms between chars - slower but more stable for large pastes
 
 // HID modifier bits
 #define MOD_LCTRL 0x01
