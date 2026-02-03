@@ -168,18 +168,21 @@ void updateKeyBridgeDisplay();
 
 // Update KeyBridge display with status
 void showKeyBridgeStatus(const char* status, uint16_t statusColor) {
+    // COMPLETELY CLEAR THE ENTIRE SCREEN - fill with background color
     lcd.fillScreen(COLOR_BG);
+    delay(2);  // Small delay to ensure clear completes
+    lcd.fillScreen(COLOR_BG);  // Double clear to be absolutely sure
 
-    // Header
+    // Header - "KeyBridge" title
     lcd.setTextColor(COLOR_ACCENT);
     lcd.setTextSize(1);
     lcd.setCursor(5, 5);
     lcd.println("KeyBridge");
 
-    // Divider
+    // Divider line
     lcd.drawFastHLine(0, 18, lcd.width(), COLOR_ACCENT);
 
-    // Status
+    // Status line
     lcd.setTextColor(statusColor);
     lcd.setCursor(5, 25);
     lcd.println(status);
