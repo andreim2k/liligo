@@ -848,11 +848,11 @@ void updateBLEDisplay()
     int dispWidth = lcd.width();
     int dispHeight = lcd.height();
 
-    // Draw title
-    lcd.setTextSize(1);
+    // Draw title - larger font at top
+    lcd.setTextSize(2);
     lcd.setTextColor(COLOR_ACCENT);
-    lcd.setCursor(5, 20);
-    lcd.print("BLE TYPING");
+    lcd.setCursor(2, 5);
+    lcd.print("Sending chars...");
 
     // Draw progress bar
     int barX = 5;
