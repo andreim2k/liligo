@@ -364,18 +364,19 @@ class TextCharCallbacks : public BLECharacteristicCallbacks {
         lcd.print(display);
         lcd.print("          ");  // Clear rest of line
 
-        // Type in chunks with delays to prevent buffer overflow
-        // Send up to 32 chars at a time with small delay between chunks
-        const size_t CHUNK_SIZE = 32;
-        for (size_t i = 0; i < buffer.length(); i += CHUNK_SIZE) {
-            size_t chunk_len = (i + CHUNK_SIZE < buffer.length()) ? CHUNK_SIZE : (buffer.length() - i);
-            String chunk = buffer.substring(i, i + chunk_len);
-            Keyboard.print(chunk);
-            keyCount += chunk_len;
+        // Type character by character with occasional delays to prevent buffer overflow
+        // This avoids creating temporary String objects that fragment the heap
+        const size_t DELAY_INTERVAL = 64;  // Delay every 64 chars for large pastes
+        for (size_t i = 0; i < buffer.length(); i++) {
+            char c = buffer[i];
+            Keyboard.press(c);
+            Keyboard.releaseAll();
+            keyCount++;
 
-            // Small delay between chunks for large pastes (helps USB HID stack)
-            if (buffer.length() > 100 && i + CHUNK_SIZE < buffer.length()) {
-                delay(2);  // 2ms between chunks for large pastes
+            // Small delay every N characters for large pastes to prevent overflow
+            // This is more efficient than chunking with substring()
+            if (buffer.length() > 500 && (i % DELAY_INTERVAL) == (DELAY_INTERVAL - 1)) {
+                delay(1);  // 1ms delay every 64 chars
             }
         }
 
