@@ -20,13 +20,15 @@
 #include <BLE2902.h>
 
 // Display setup using LovyanGFX for T-Dongle-S3
-class LGFX : public lgfx::LGFX_Device {
+class LGFX : public lgfx::LGFX_Device
+{
     lgfx::Panel_ST7735S _panel_instance;
     lgfx::Bus_SPI _bus_instance;
     lgfx::Light_PWM _light_instance;
 
 public:
-    LGFX(void) {
+    LGFX(void)
+    {
         {
             auto cfg = _bus_instance.config();
             cfg.spi_mode = 0;
@@ -88,28 +90,32 @@ USBHIDKeyboard Keyboard;
 USBHIDMouse Mouse;
 
 // Operating modes
-enum OperatingMode { MODE_MOUSE_MOVER, MODE_KEYBOARD_BRIDGE };
+enum OperatingMode
+{
+    MODE_MOUSE_MOVER,
+    MODE_KEYBOARD_BRIDGE
+};
 OperatingMode currentMode = MODE_MOUSE_MOVER;
-OperatingMode lastDisplayMode = MODE_MOUSE_MOVER;  // Track which screen is showing
+OperatingMode lastDisplayMode = MODE_MOUSE_MOVER; // Track which screen is showing
 bool needsDisplayRefresh = true;
-bool needsModeSwitch = false;  // Force full screen clear on mode switch
+bool needsModeSwitch = false; // Force full screen clear on mode switch
 
 // Mouse mover timing variables
 unsigned long lastMoveTime = 0;
 unsigned long nextMoveDelay = 0;
 unsigned long moveCount = 0;
 unsigned long startTime = 0;
-unsigned long pausedTimeRemaining = 0;  // Store remaining time when BLE connects
+unsigned long pausedTimeRemaining = 0; // Store remaining time when BLE connects
 
 // BLE UUIDs
-#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define CHAR_TEXT_UUID      "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define CHAR_HID_UUID       "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+#define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHAR_TEXT_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define CHAR_HID_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
 // BLE state
-BLEServer* pServer = nullptr;
-BLECharacteristic* pTextCharacteristic = nullptr;
-BLECharacteristic* pHidCharacteristic = nullptr;
+BLEServer *pServer = nullptr;
+BLECharacteristic *pTextCharacteristic = nullptr;
+BLECharacteristic *pHidCharacteristic = nullptr;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
@@ -119,36 +125,37 @@ String lastText = "";
 
 // Text queue for async processing (prevents BLE callback blocking)
 // Use circular buffer instead of String to avoid heap fragmentation
-const size_t MAX_QUEUE_SIZE = 4096;  // 4KB buffer
+const size_t MAX_QUEUE_SIZE = 4096; // 4KB buffer
 char textQueueBuffer[MAX_QUEUE_SIZE];
 size_t queueStart = 0;
 size_t queueEnd = 0;
 unsigned long lastCharTime = 0;
-const unsigned long CHAR_INTERVAL = 2;  // 2ms between chars for reliable typing
+const unsigned long CHAR_INTERVAL = 2; // 2ms between chars for reliable typing
 
 // HID modifier bits
-#define MOD_LCTRL   0x01
-#define MOD_LSHIFT  0x02
-#define MOD_LALT    0x04
-#define MOD_LGUI    0x08
-#define MOD_RCTRL   0x10
-#define MOD_RSHIFT  0x20
-#define MOD_RALT    0x40
-#define MOD_RGUI    0x80
+#define MOD_LCTRL 0x01
+#define MOD_LSHIFT 0x02
+#define MOD_LALT 0x04
+#define MOD_LGUI 0x08
+#define MOD_RCTRL 0x10
+#define MOD_RSHIFT 0x20
+#define MOD_RALT 0x40
+#define MOD_RGUI 0x80
 
 // Colors
-#define COLOR_BG      0x0841    // Dark background
-#define COLOR_PANEL   0x2124    // Panel background
-#define COLOR_ACCENT  0x05FF    // Cyan
-#define COLOR_SUCCESS 0x07E0    // Green
-#define COLOR_WARNING 0xFD20    // Orange
-#define COLOR_DANGER  0xF800    // Red
-#define COLOR_TEXT    0xFFFF    // White
-#define COLOR_DIM     0x8410    // Gray
-#define COLOR_KEY     0xFFE0    // Yellow
+#define COLOR_BG 0x0841      // Dark background
+#define COLOR_PANEL 0x2124   // Panel background
+#define COLOR_ACCENT 0x05FF  // Cyan
+#define COLOR_SUCCESS 0x07E0 // Green
+#define COLOR_WARNING 0xFD20 // Orange
+#define COLOR_DANGER 0xF800  // Red
+#define COLOR_TEXT 0xFFFF    // White
+#define COLOR_DIM 0x8410     // Gray
+#define COLOR_KEY 0xFFE0     // Yellow
 
 // Set LED color
-void setLed(uint8_t r, uint8_t g, uint8_t b) {
+void setLed(uint8_t r, uint8_t g, uint8_t b)
+{
     ledColors[0] = rgb_color{r, g, b};
     ledStrip.write(ledColors, 1);
 }
@@ -169,100 +176,158 @@ void updateKeyBridgeDisplay();
 // BLE display functions REMOVED - no display for BLE mode
 
 // HID keycode to ASCII conversion for common keys
-char hidToAscii(uint8_t keycode, bool shift) {
+char hidToAscii(uint8_t keycode, bool shift)
+{
     // Letters a-z (keycodes 0x04-0x1D)
-    if (keycode >= 0x04 && keycode <= 0x1D) {
+    if (keycode >= 0x04 && keycode <= 0x1D)
+    {
         char c = 'a' + (keycode - 0x04);
-        return shift ? (c - 32) : c;  // Uppercase if shift
+        return shift ? (c - 32) : c; // Uppercase if shift
     }
     // Numbers 1-9 (keycodes 0x1E-0x26)
-    if (keycode >= 0x1E && keycode <= 0x26) {
-        if (shift) {
+    if (keycode >= 0x1E && keycode <= 0x26)
+    {
+        if (shift)
+        {
             const char shifted[] = "!@#$%^&*(";
             return shifted[keycode - 0x1E];
         }
         return '1' + (keycode - 0x1E);
     }
     // 0 (keycode 0x27)
-    if (keycode == 0x27) return shift ? ')' : '0';
+    if (keycode == 0x27)
+        return shift ? ')' : '0';
 
     // Special characters
-    switch (keycode) {
-        case 0x28: return '\n';  // Enter
-        case 0x2A: return '\b';  // Backspace
-        case 0x2B: return '\t';  // Tab
-        case 0x2C: return ' ';   // Space
-        case 0x2D: return shift ? '_' : '-';
-        case 0x2E: return shift ? '+' : '=';
-        case 0x2F: return shift ? '{' : '[';
-        case 0x30: return shift ? '}' : ']';
-        case 0x31: return shift ? '|' : '\\';
-        case 0x33: return shift ? ':' : ';';
-        case 0x34: return shift ? '"' : '\'';
-        case 0x35: return shift ? '~' : '`';
-        case 0x36: return shift ? '<' : ',';
-        case 0x37: return shift ? '>' : '.';
-        case 0x38: return shift ? '?' : '/';
-        default: return 0;
+    switch (keycode)
+    {
+    case 0x28:
+        return '\n'; // Enter
+    case 0x2A:
+        return '\b'; // Backspace
+    case 0x2B:
+        return '\t'; // Tab
+    case 0x2C:
+        return ' '; // Space
+    case 0x2D:
+        return shift ? '_' : '-';
+    case 0x2E:
+        return shift ? '+' : '=';
+    case 0x2F:
+        return shift ? '{' : '[';
+    case 0x30:
+        return shift ? '}' : ']';
+    case 0x31:
+        return shift ? '|' : '\\';
+    case 0x33:
+        return shift ? ':' : ';';
+    case 0x34:
+        return shift ? '"' : '\'';
+    case 0x35:
+        return shift ? '~' : '`';
+    case 0x36:
+        return shift ? '<' : ',';
+    case 0x37:
+        return shift ? '>' : '.';
+    case 0x38:
+        return shift ? '?' : '/';
+    default:
+        return 0;
     }
 }
 
 // Map HID keycode to Arduino key constant for special keys
-uint8_t hidToArduinoKey(uint8_t keycode) {
-    switch (keycode) {
-        // Arrow keys
-        case 0x4F: return KEY_RIGHT_ARROW;
-        case 0x50: return KEY_LEFT_ARROW;
-        case 0x51: return KEY_DOWN_ARROW;
-        case 0x52: return KEY_UP_ARROW;
-        // Navigation
-        case 0x49: return KEY_INSERT;
-        case 0x4A: return KEY_HOME;
-        case 0x4B: return KEY_PAGE_UP;
-        case 0x4C: return KEY_DELETE;
-        case 0x4D: return KEY_END;
-        case 0x4E: return KEY_PAGE_DOWN;
-        // Function keys
-        case 0x3A: return KEY_F1;
-        case 0x3B: return KEY_F2;
-        case 0x3C: return KEY_F3;
-        case 0x3D: return KEY_F4;
-        case 0x3E: return KEY_F5;
-        case 0x3F: return KEY_F6;
-        case 0x40: return KEY_F7;
-        case 0x41: return KEY_F8;
-        case 0x42: return KEY_F9;
-        case 0x43: return KEY_F10;
-        case 0x44: return KEY_F11;
-        case 0x45: return KEY_F12;
-        // Special
-        case 0x29: return KEY_ESC;
-        case 0x39: return KEY_CAPS_LOCK;
-        default: return 0;
+uint8_t hidToArduinoKey(uint8_t keycode)
+{
+    switch (keycode)
+    {
+    // Arrow keys
+    case 0x4F:
+        return KEY_RIGHT_ARROW;
+    case 0x50:
+        return KEY_LEFT_ARROW;
+    case 0x51:
+        return KEY_DOWN_ARROW;
+    case 0x52:
+        return KEY_UP_ARROW;
+    // Navigation
+    case 0x49:
+        return KEY_INSERT;
+    case 0x4A:
+        return KEY_HOME;
+    case 0x4B:
+        return KEY_PAGE_UP;
+    case 0x4C:
+        return KEY_DELETE;
+    case 0x4D:
+        return KEY_END;
+    case 0x4E:
+        return KEY_PAGE_DOWN;
+    // Function keys
+    case 0x3A:
+        return KEY_F1;
+    case 0x3B:
+        return KEY_F2;
+    case 0x3C:
+        return KEY_F3;
+    case 0x3D:
+        return KEY_F4;
+    case 0x3E:
+        return KEY_F5;
+    case 0x3F:
+        return KEY_F6;
+    case 0x40:
+        return KEY_F7;
+    case 0x41:
+        return KEY_F8;
+    case 0x42:
+        return KEY_F9;
+    case 0x43:
+        return KEY_F10;
+    case 0x44:
+        return KEY_F11;
+    case 0x45:
+        return KEY_F12;
+    // Special
+    case 0x29:
+        return KEY_ESC;
+    case 0x39:
+        return KEY_CAPS_LOCK;
+    default:
+        return 0;
     }
 }
 
 // Send raw HID key event
-void sendHidKey(uint8_t modifiers, uint8_t keycode) {
+void sendHidKey(uint8_t modifiers, uint8_t keycode)
+{
     bool shift = (modifiers & (MOD_LSHIFT | MOD_RSHIFT)) != 0;
     bool ctrl = (modifiers & (MOD_LCTRL | MOD_RCTRL)) != 0;
     bool alt = (modifiers & (MOD_LALT | MOD_RALT)) != 0;
     bool gui = (modifiers & (MOD_LGUI | MOD_RGUI)) != 0;
 
     // Press modifiers
-    if (ctrl) Keyboard.press(KEY_LEFT_CTRL);
-    if (alt) Keyboard.press(KEY_LEFT_ALT);
-    if (gui) Keyboard.press(KEY_LEFT_GUI);
-    if (shift) Keyboard.press(KEY_LEFT_SHIFT);
+    if (ctrl)
+        Keyboard.press(KEY_LEFT_CTRL);
+    if (alt)
+        Keyboard.press(KEY_LEFT_ALT);
+    if (gui)
+        Keyboard.press(KEY_LEFT_GUI);
+    if (shift)
+        Keyboard.press(KEY_LEFT_SHIFT);
 
     // Try special key first
     uint8_t specialKey = hidToArduinoKey(keycode);
-    if (specialKey) {
+    if (specialKey)
+    {
         Keyboard.press(specialKey);
-    } else {
+    }
+    else
+    {
         // Convert HID keycode to ASCII and send
         char ascii = hidToAscii(keycode, false);
-        if (ascii) {
+        if (ascii)
+        {
             Keyboard.press(ascii);
         }
     }
@@ -272,15 +337,20 @@ void sendHidKey(uint8_t modifiers, uint8_t keycode) {
 }
 
 // BLE Server Callbacks
-class ServerCallbacks : public BLEServerCallbacks {
-    void onConnect(BLEServer* pServer) override {
+class ServerCallbacks : public BLEServerCallbacks
+{
+    void onConnect(BLEServer *pServer) override
+    {
         deviceConnected = true;
 
         // Store remaining countdown time before switching modes
         unsigned long elapsed = getElapsedTime(lastMoveTime, millis());
-        if (elapsed < nextMoveDelay) {
+        if (elapsed < nextMoveDelay)
+        {
             pausedTimeRemaining = nextMoveDelay - elapsed;
-        } else {
+        }
+        else
+        {
             pausedTimeRemaining = 0;
         }
 
@@ -288,11 +358,12 @@ class ServerCallbacks : public BLEServerCallbacks {
         currentMode = MODE_KEYBOARD_BRIDGE;
         needsDisplayRefresh = true;
 
-        setLed(0, 50, 0);  // Green
+        setLed(0, 50, 0); // Green
         Serial.println("BLE connected - switching to KeyBridge mode");
     }
 
-    void onDisconnect(BLEServer* pServer) override {
+    void onDisconnect(BLEServer *pServer) override
+    {
         deviceConnected = false;
 
         // Switch back to mouse mover mode
@@ -303,40 +374,51 @@ class ServerCallbacks : public BLEServerCallbacks {
         lastMoveTime = millis();
         nextMoveDelay = pausedTimeRemaining > 0 ? pausedTimeRemaining : getRandomDelay();
 
-        setLed(0, 50, 0);  // Green (mouse mover ready)
+        setLed(0, 50, 0); // Green (mouse mover ready)
         Serial.println("BLE disconnected - switching to Mouse Mover mode");
     }
 };
 
 // Text characteristic callbacks
-class TextCharCallbacks : public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic* pCharacteristic) override {
+class TextCharCallbacks : public BLECharacteristicCallbacks
+{
+    void onWrite(BLECharacteristic *pCharacteristic) override
+    {
         std::string value = pCharacteristic->getValue();
-        if (value.length() == 0) return;
+        if (value.length() == 0)
+            return;
 
         // Build clean buffer, filtering out invalid UTF-8 and control chars
         String buffer = "";
-        for (size_t i = 0; i < value.length(); i++) {
+        for (size_t i = 0; i < value.length(); i++)
+        {
             uint8_t c = (uint8_t)value[i];
 
             // Skip UTF-8 multi-byte sequences (firmware doesn't support non-ASCII)
-            if (c >= 0x80) {
-                if ((c & 0xE0) == 0xC0) i += 1;
-                else if ((c & 0xF0) == 0xE0) i += 2;
-                else if ((c & 0xF8) == 0xF0) i += 3;
+            if (c >= 0x80)
+            {
+                if ((c & 0xE0) == 0xC0)
+                    i += 1;
+                else if ((c & 0xF0) == 0xE0)
+                    i += 2;
+                else if ((c & 0xF8) == 0xF0)
+                    i += 3;
                 continue;
             }
 
             // Skip carriage return
-            if (c == '\r') continue;
+            if (c == '\r')
+                continue;
 
             // Add valid ASCII characters
-            if (c == '\n' || c == '\t' || (c >= 0x20 && c <= 0x7E)) {
+            if (c == '\n' || c == '\t' || (c >= 0x20 && c <= 0x7E))
+            {
                 buffer += (char)c;
             }
         }
 
-        if (buffer.length() == 0) return;
+        if (buffer.length() == 0)
+            return;
 
         // Queue text for async processing in main loop
         // This prevents BLE callback from blocking during long typing sessions
@@ -344,23 +426,20 @@ class TextCharCallbacks : public BLECharacteristicCallbacks {
 
         // Add chars to circular buffer queue
         size_t chars_added = 0;
-        for (size_t i = 0; i < buffer.length(); i++) {
+        for (size_t i = 0; i < buffer.length(); i++)
+        {
             size_t next = (queueEnd + 1) % MAX_QUEUE_SIZE;
-            if (next != queueStart) {  // Don't overwrite unprocessed chars
+            if (next != queueStart)
+            { // Don't overwrite unprocessed chars
                 textQueueBuffer[queueEnd] = buffer[i];
                 queueEnd = next;
                 chars_added++;
-            } else {
-                break;  // Buffer full
+            }
+            else
+            {
+                break; // Buffer full
             }
         }
-
-        // Update display
-        lcd.setTextColor(COLOR_KEY, COLOR_BG);
-        lcd.setCursor(5, 60);
-        String display = buffer.substring(0, 12);
-        lcd.print(display);
-        lcd.print("          ");  // Clear rest of line
 
         size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
         Serial.printf("Text queued: %d chars (queue: %d/%d)\n", chars_added, queue_size, MAX_QUEUE_SIZE);
@@ -368,10 +447,13 @@ class TextCharCallbacks : public BLECharacteristicCallbacks {
 };
 
 // HID characteristic callbacks
-class HidCharCallbacks : public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic* pCharacteristic) override {
+class HidCharCallbacks : public BLECharacteristicCallbacks
+{
+    void onWrite(BLECharacteristic *pCharacteristic) override
+    {
         std::string value = pCharacteristic->getValue();
-        if (value.length() < 2) {
+        if (value.length() < 2)
+        {
             Serial.printf("Error: HID write too short (%d bytes)\n", value.length());
             return;
         }
@@ -388,10 +470,14 @@ class HidCharCallbacks : public BLECharacteristicCallbacks {
 /**
  * Safely calculates elapsed time handling millis() overflow
  */
-unsigned long getElapsedTime(unsigned long start, unsigned long current) {
-    if (current >= start) {
+unsigned long getElapsedTime(unsigned long start, unsigned long current)
+{
+    if (current >= start)
+    {
         return current - start;
-    } else {
+    }
+    else
+    {
         // Handle wrap-around: millis() overflowed
         return (ULONG_MAX - start) + current + 1;
     }
@@ -400,7 +486,8 @@ unsigned long getElapsedTime(unsigned long start, unsigned long current) {
 /**
  * Get random delay between 7-60 seconds
  */
-unsigned long getRandomDelay() {
+unsigned long getRandomDelay()
+{
     unsigned long delayMs = random(7000, 60001);
     Serial.printf("Next mouse move in %lu ms (%lu seconds)\n", delayMs, delayMs / 1000);
     return delayMs;
@@ -409,7 +496,8 @@ unsigned long getRandomDelay() {
 /**
  * Format seconds into HH:MM:SS string
  */
-String formatTime(unsigned long seconds) {
+String formatTime(unsigned long seconds)
+{
     unsigned long hours = seconds / 3600;
     unsigned long minutes = (seconds % 3600) / 60;
     unsigned long secs = seconds % 60;
@@ -422,8 +510,10 @@ String formatTime(unsigned long seconds) {
 /**
  * Move mouse 1 pixel right then left
  */
-void moveMouse() {
-    if (currentMode != MODE_MOUSE_MOVER) return;
+void moveMouse()
+{
+    if (currentMode != MODE_MOUSE_MOVER)
+        return;
 
     Serial.printf("Moving mouse (count: %lu)\n", moveCount + 1);
 
@@ -445,11 +535,13 @@ void moveMouse() {
 /**
  * Draw mouse mover header with status indicator
  */
-void drawMouseMoverHeader() {
+void drawMouseMoverHeader()
+{
     int dispWidth = lcd.width();
 
     // Gradient header background
-    for (int y = 0; y < 16; y++) {
+    for (int y = 0; y < 16; y++)
+    {
         uint16_t color = lcd.color565(0, 40 + y * 2, 60 + y * 3);
         lcd.drawFastHLine(0, y, dispWidth, color);
     }
@@ -461,7 +553,7 @@ void drawMouseMoverHeader() {
     lcd.setTextSize(1);
     lcd.setTextColor(COLOR_TEXT);
     lcd.setCursor(4, 4);
-    lcd.print((char)0x10);  // Triangle icon
+    lcd.print((char)0x10); // Triangle icon
     lcd.print(" AUTO MOUSE MOVER");
 
     // Status indicator (top right)
@@ -473,7 +565,8 @@ void drawMouseMoverHeader() {
 /**
  * Draw uptime panel showing running time
  */
-void drawUptimePanel(unsigned long seconds) {
+void drawUptimePanel(unsigned long seconds)
+{
     int panelY = 18;
     int panelH = 16;
     int dispWidth = lcd.width();
@@ -488,7 +581,7 @@ void drawUptimePanel(unsigned long seconds) {
     lcd.setTextSize(1);
     lcd.setTextColor(COLOR_ACCENT);
     lcd.setCursor(5, panelY + 4);
-    lcd.print((char)0x0F);  // Clock symbol
+    lcd.print((char)0x0F); // Clock symbol
 
     lcd.setTextColor(COLOR_DIM);
     lcd.setCursor(15, panelY + 4);
@@ -508,7 +601,8 @@ static unsigned long moveAnimationStart = 0;
 /**
  * Draw countdown panel with progress bar
  */
-void drawCountdownPanel(unsigned long timeLeft, unsigned long totalTime) {
+void drawCountdownPanel(unsigned long timeLeft, unsigned long totalTime)
+{
     int panelY = 36;
     int panelH = 30;
     int dispWidth = lcd.width();
@@ -524,10 +618,13 @@ void drawCountdownPanel(unsigned long timeLeft, unsigned long totalTime) {
         accentColor = COLOR_WARNING;
 
     // Panel border with pulsing effect when near zero
-    if (timeLeft < 5 && (pulsePhase % 64) < 32) {
+    if (timeLeft < 5 && (pulsePhase % 64) < 32)
+    {
         drawRoundRect(2, panelY, dispWidth - 4, panelH, 3, accentColor);
         drawRoundRect(3, panelY + 1, dispWidth - 6, panelH - 2, 3, accentColor);
-    } else {
+    }
+    else
+    {
         drawRoundRect(2, panelY, dispWidth - 4, panelH, 3, accentColor);
     }
 
@@ -535,7 +632,7 @@ void drawCountdownPanel(unsigned long timeLeft, unsigned long totalTime) {
     char timeStr[12];
     sprintf(timeStr, "%lu", timeLeft);
 
-    int labelWidth = 8 * 6;  // "NEXT IN:"
+    int labelWidth = 8 * 6; // "NEXT IN:"
     int spaceWidth = 4;
     int numberWidth = strlen(timeStr) * 12;
     int suffixWidth = 6;
@@ -564,8 +661,10 @@ void drawCountdownPanel(unsigned long timeLeft, unsigned long totalTime) {
 
     // Progress bar at bottom of panel
     float percentage = 1.0 - ((float)timeLeft / (float)totalTime);
-    if (percentage < 0) percentage = 0;
-    if (percentage > 1) percentage = 1;
+    if (percentage < 0)
+        percentage = 0;
+    if (percentage > 1)
+        percentage = 1;
 
     drawProgressBar(6, panelY + panelH - 6, dispWidth - 12, 3, percentage, accentColor);
 }
@@ -573,7 +672,8 @@ void drawCountdownPanel(unsigned long timeLeft, unsigned long totalTime) {
 /**
  * Draw stats panel showing total move count
  */
-void drawStatsPanel() {
+void drawStatsPanel()
+{
     int panelY = 68;
     int panelH = 11;
     int dispWidth = lcd.width();
@@ -588,7 +688,7 @@ void drawStatsPanel() {
     lcd.setTextSize(1);
     lcd.setTextColor(COLOR_SUCCESS);
     lcd.setCursor(5, panelY + 2);
-    lcd.print((char)0xFB);  // Check mark
+    lcd.print((char)0xFB); // Check mark
 
     // Label
     lcd.setTextColor(COLOR_DIM);
@@ -601,7 +701,8 @@ void drawStatsPanel() {
     lcd.print(moveCount);
 
     // Animation flash on new move
-    if (justMoved) {
+    if (justMoved)
+    {
         lcd.drawRect(1, panelY - 1, dispWidth - 2, panelH + 2, COLOR_SUCCESS);
     }
 }
@@ -609,14 +710,16 @@ void drawStatsPanel() {
 /**
  * Draw a progress bar
  */
-void drawProgressBar(int x, int y, int width, int height, float percentage, uint16_t color) {
+void drawProgressBar(int x, int y, int width, int height, float percentage, uint16_t color)
+{
     // Background
     lcd.fillRect(x, y, width, height, COLOR_BG);
     lcd.drawRect(x, y, width, height, COLOR_DIM);
 
     // Filled portion
     int fillWidth = (int)((width - 2) * percentage);
-    if (fillWidth > 0) {
+    if (fillWidth > 0)
+    {
         lcd.fillRect(x + 1, y + 1, fillWidth, height - 2, color);
     }
 }
@@ -624,7 +727,8 @@ void drawProgressBar(int x, int y, int width, int height, float percentage, uint
 /**
  * Draw a rounded rectangle border
  */
-void drawRoundRect(int x, int y, int width, int height, int radius, uint16_t color) {
+void drawRoundRect(int x, int y, int width, int height, int radius, uint16_t color)
+{
     lcd.drawRect(x + radius, y, width - 2 * radius, height, color);
     lcd.drawRect(x, y + radius, width, height - 2 * radius, color);
 
@@ -638,7 +742,8 @@ void drawRoundRect(int x, int y, int width, int height, int radius, uint16_t col
 /**
  * Update mouse mover display
  */
-void updateMouseMoverDisplay() {
+void updateMouseMoverDisplay()
+{
     static unsigned long lastUptimeSeconds = 0;
     static unsigned long lastTimeUntilMove = 9999;
     static unsigned long lastMoveCount = 0;
@@ -651,12 +756,14 @@ void updateMouseMoverDisplay() {
     unsigned long timeUntilMove = 0;
 
     unsigned long elapsedSinceLastMove = getElapsedTime(lastMoveTime, currentTime);
-    if (elapsedSinceLastMove < nextMoveDelay) {
+    if (elapsedSinceLastMove < nextMoveDelay)
+    {
         timeUntilMove = (nextMoveDelay - elapsedSinceLastMove) / 1000;
     }
 
     // On mode switch, do FULL redraw
-    if (needsModeSwitch) {
+    if (needsModeSwitch)
+    {
         lcd.fillScreen(COLOR_BG);
         drawMouseMoverHeader();
         needsFullRedraw = false;
@@ -668,7 +775,8 @@ void updateMouseMoverDisplay() {
     }
 
     // On first run, do FULL redraw
-    if (needsFullRedraw || needsDisplayRefresh) {
+    if (needsFullRedraw || needsDisplayRefresh)
+    {
         lcd.fillScreen(COLOR_BG);
         drawMouseMoverHeader();
         needsFullRedraw = false;
@@ -680,19 +788,22 @@ void updateMouseMoverDisplay() {
     }
 
     // Update uptime panel
-    if (uptimeSeconds != lastUptimeSeconds) {
+    if (uptimeSeconds != lastUptimeSeconds)
+    {
         drawUptimePanel(uptimeSeconds);
         lastUptimeSeconds = uptimeSeconds;
     }
 
     // Update countdown panel
-    if (timeUntilMove != lastTimeUntilMove) {
+    if (timeUntilMove != lastTimeUntilMove)
+    {
         drawCountdownPanel(timeUntilMove, nextMoveDelay / 1000);
         lastTimeUntilMove = timeUntilMove;
     }
 
     // Update stats panel
-    if (moveCount != lastMoveCount) {
+    if (moveCount != lastMoveCount)
+    {
         drawStatsPanel();
         lastMoveCount = moveCount;
     }
@@ -703,50 +814,55 @@ void updateMouseMoverDisplay() {
 /**
  * Main display update dispatcher
  */
-void updateDisplay() {
+void updateDisplay()
+{
     // If we're typing (queue has chars), ONLY blink LED - don't touch display at all
     bool isTyping = (queueStart != queueEnd);
     OperatingMode displayMode = (isTyping || currentMode == MODE_KEYBOARD_BRIDGE) ? MODE_KEYBOARD_BRIDGE : MODE_MOUSE_MOVER;
 
     // Detect mode switch
-    if (displayMode != lastDisplayMode) {
+    if (displayMode != lastDisplayMode)
+    {
         needsModeSwitch = true;
         lastDisplayMode = displayMode;
         needsDisplayRefresh = true;
 
         // When switching TO or FROM BLE: COMPLETELY clear display
-        if (displayMode == MODE_KEYBOARD_BRIDGE) {
-            // Entering BLE mode: clear all text from bottom
-            lcd.fillScreen(COLOR_BG);
-            delay(1);
-            lcd.fillScreen(COLOR_BG);
-        } else if (displayMode == MODE_MOUSE_MOVER) {
+        if (displayMode == MODE_MOUSE_MOVER)
+        {
             // Exiting BLE mode: clear display and reset LED
             lcd.fillScreen(COLOR_BG);
             delay(1);
             lcd.fillScreen(COLOR_BG);
-            setLed(0, 50, 0);  // Reset LED to mouse mover green
+            setLed(0, 50, 0); // Reset LED to mouse mover green
         }
     }
 
-    if (displayMode == MODE_KEYBOARD_BRIDGE) {
+    if (displayMode == MODE_KEYBOARD_BRIDGE)
+    {
         // BLE mode: DO NOT TOUCH THE LCD AT ALL!
         // ONLY blink LED green - nothing else!
         static unsigned long lastBlink = 0;
         static bool ledOn = false;
 
-        if (getElapsedTime(lastBlink, millis()) >= 100) {
+        if (getElapsedTime(lastBlink, millis()) >= 100)
+        {
             ledOn = !ledOn;
-            if (ledOn) {
-                setLed(0, 100, 0);  // Green bright
-            } else {
-                setLed(0, 30, 0);   // Green dim
+            if (ledOn)
+            {
+                setLed(0, 100, 0); // Green bright
+            }
+            else
+            {
+                setLed(0, 30, 0); // Green dim
             }
             lastBlink = millis();
         }
         // NOTHING else - no LCD operations!
-        return;  // Exit immediately - don't do anything else
-    } else {
+        return; // Exit immediately - don't do anything else
+    }
+    else
+    {
         // Mouse mover mode: Show full display (update mouse screen)
         updateMouseMoverDisplay();
     }
@@ -756,7 +872,8 @@ void updateDisplay() {
 // Setup and Loop
 // ============================================================================
 
-void setup() {
+void setup()
+{
     Serial.begin(115200);
     Serial.println("KeyBridge + Mouse Mover starting...");
 
@@ -786,31 +903,29 @@ void setup() {
     Keyboard.begin();
     Mouse.begin();
     USB.begin();
-    delay(2000);  // Give USB time to enumerate
+    delay(2000); // Give USB time to enumerate
 
     // Initialize BLE with large MTU for fast transfers
     BLEDevice::init("KeyBridge");
-    BLEDevice::setMTU(517);  // Max BLE 5.0 MTU
+    BLEDevice::setMTU(517); // Max BLE 5.0 MTU
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
 
-    BLEService* pService = pServer->createService(SERVICE_UUID);
+    BLEService *pService = pServer->createService(SERVICE_UUID);
 
     pTextCharacteristic = pService->createCharacteristic(
         CHAR_TEXT_UUID,
-        BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
-    );
+        BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
     pTextCharacteristic->setCallbacks(new TextCharCallbacks());
 
     pHidCharacteristic = pService->createCharacteristic(
         CHAR_HID_UUID,
-        BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
-    );
+        BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
     pHidCharacteristic->setCallbacks(new HidCharCallbacks());
 
     pService->start();
 
-    BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->setScanResponse(true);
     pAdvertising->setMinPreferred(0x06);
@@ -830,23 +945,27 @@ void setup() {
     Serial.println("Connect via BLE to switch to KeyBridge mode");
 }
 
-void loop() {
+void loop()
+{
     unsigned long currentTime = millis();
 
     // Handle BLE reconnection
-    if (!deviceConnected && oldDeviceConnected) {
+    if (!deviceConnected && oldDeviceConnected)
+    {
         delay(500);
         BLEDevice::startAdvertising();
         oldDeviceConnected = deviceConnected;
     }
 
-    if (deviceConnected && !oldDeviceConnected) {
+    if (deviceConnected && !oldDeviceConnected)
+    {
         oldDeviceConnected = deviceConnected;
     }
 
     // Process queued text asynchronously (character by character with delays)
     // This keeps BLE responsive while typing
-    if (queueStart != queueEnd && getElapsedTime(lastCharTime, currentTime) >= CHAR_INTERVAL) {
+    if (queueStart != queueEnd && getElapsedTime(lastCharTime, currentTime) >= CHAR_INTERVAL)
+    {
         char c = textQueueBuffer[queueStart];
         queueStart = (queueStart + 1) % MAX_QUEUE_SIZE;
 
@@ -858,8 +977,10 @@ void loop() {
     }
 
     // Mouse mover logic (only in mouse mode and no text queued)
-    if (currentMode == MODE_MOUSE_MOVER && queueStart == queueEnd) {
-        if (getElapsedTime(lastMoveTime, currentTime) >= nextMoveDelay) {
+    if (currentMode == MODE_MOUSE_MOVER && queueStart == queueEnd)
+    {
+        if (getElapsedTime(lastMoveTime, currentTime) >= nextMoveDelay)
+        {
             moveMouse();
             lastMoveTime = currentTime;
             nextMoveDelay = getRandomDelay();
@@ -868,18 +989,20 @@ void loop() {
         }
 
         // Reset move animation after 500ms
-        if (justMoved && getElapsedTime(moveAnimationStart, currentTime) > 500) {
+        if (justMoved && getElapsedTime(moveAnimationStart, currentTime) > 500)
+        {
             justMoved = false;
         }
     }
 
     // Update display every 50ms for smooth animations
     static unsigned long lastDisplayUpdate = 0;
-    if (getElapsedTime(lastDisplayUpdate, currentTime) >= 50) {
+    if (getElapsedTime(lastDisplayUpdate, currentTime) >= 50)
+    {
         updateDisplay();
         lastDisplayUpdate = currentTime;
         pulsePhase = (pulsePhase + 1) % 255;
     }
 
-    delay(1);  // Reduced from 10ms to allow faster character processing
+    delay(1); // Reduced from 10ms to allow faster character processing
 }
