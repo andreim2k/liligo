@@ -115,6 +115,11 @@ bool oldDeviceConnected = false;
 uint32_t keyCount = 0;
 String lastText = "";
 
+// Text queue for async processing (prevents BLE callback blocking)
+String textQueue = "";
+unsigned long lastCharTime = 0;
+const unsigned long CHAR_INTERVAL = 2;  // 2ms between chars for reliable typing
+
 // HID modifier bits
 #define MOD_LCTRL   0x01
 #define MOD_LSHIFT  0x02
@@ -356,32 +361,19 @@ class TextCharCallbacks : public BLECharacteristicCallbacks {
 
         if (buffer.length() == 0) return;
 
-        // Store for display (only first 12 chars visible)
+        // Queue text for async processing in main loop
+        // This prevents BLE callback from blocking during long typing sessions
+        textQueue += buffer;
         lastText = buffer;
+
+        // Update display
         lcd.setTextColor(COLOR_KEY, COLOR_BG);
         lcd.setCursor(5, 60);
         String display = buffer.substring(0, 12);
         lcd.print(display);
         lcd.print("          ");  // Clear rest of line
 
-        // Type character by character with occasional delays to prevent buffer overflow
-        // This avoids creating temporary String objects that fragment the heap
-        const size_t DELAY_INTERVAL = 64;  // Delay every 64 chars for large pastes
-        for (size_t i = 0; i < buffer.length(); i++) {
-            char c = buffer[i];
-            Keyboard.press(c);
-            Keyboard.releaseAll();
-            keyCount++;
-
-            // Small delay every N characters for large pastes to prevent overflow
-            // This is more efficient than chunking with substring()
-            if (buffer.length() > 500 && (i % DELAY_INTERVAL) == (DELAY_INTERVAL - 1)) {
-                delay(1);  // 1ms delay every 64 chars
-            }
-        }
-
-        updateKeyCount();
-        Serial.printf("Text received: %d chars\n", buffer.length());
+        Serial.printf("Text queued: %d chars (queue size: %d)\n", buffer.length(), textQueue.length());
     }
 };
 
@@ -827,8 +819,22 @@ void loop() {
         oldDeviceConnected = deviceConnected;
     }
 
-    // Mouse mover logic (only in mouse mode)
-    if (currentMode == MODE_MOUSE_MOVER) {
+    // Process queued text asynchronously (character by character with delays)
+    // This keeps BLE responsive while typing
+    if (textQueue.length() > 0 && getElapsedTime(lastCharTime, currentTime) >= CHAR_INTERVAL) {
+        char c = textQueue[0];
+        textQueue = textQueue.substring(1);  // Remove first char
+
+        Keyboard.press(c);
+        Keyboard.releaseAll();
+        keyCount++;
+        lastCharTime = currentTime;
+
+        updateKeyCount();
+    }
+
+    // Mouse mover logic (only in mouse mode and no text queued)
+    if (currentMode == MODE_MOUSE_MOVER && textQueue.length() == 0) {
         if (getElapsedTime(lastMoveTime, currentTime) >= nextMoveDelay) {
             moveMouse();
             lastMoveTime = currentTime;
@@ -851,5 +857,5 @@ void loop() {
         pulsePhase = (pulsePhase + 1) % 255;
     }
 
-    delay(10);
+    delay(1);  // Reduced from 10ms to allow faster character processing
 }
