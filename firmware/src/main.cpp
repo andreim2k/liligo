@@ -791,7 +791,7 @@ void updateKeyBridgeDisplay() {
  * Main display update dispatcher
  */
 void updateDisplay() {
-    // If we're typing (queue has chars), ALWAYS show keyboard screen
+    // If we're typing (queue has chars), ONLY blink LED - don't show display
     bool isTyping = (queueStart != queueEnd);
     OperatingMode displayMode = (isTyping || currentMode == MODE_KEYBOARD_BRIDGE) ? MODE_KEYBOARD_BRIDGE : MODE_MOUSE_MOVER;
 
@@ -803,10 +803,23 @@ void updateDisplay() {
     }
 
     if (displayMode == MODE_KEYBOARD_BRIDGE) {
-        // Show keyboard screen while typing or connected
-        updateKeyBridgeDisplay();
+        // BLE mode: Don't show display, just blink LED green
+        // Blink pattern: fast green blink every 100ms
+        static unsigned long lastBlink = 0;
+        static bool ledOn = false;
+
+        if (getElapsedTime(lastBlink, millis()) >= 100) {
+            ledOn = !ledOn;
+            if (ledOn) {
+                setLed(0, 100, 0);  // Green ON
+            } else {
+                setLed(0, 30, 0);   // Green dim
+            }
+            lastBlink = millis();
+        }
+        // No display update - just LED blink!
     } else {
-        // Show mouse mover screen when idle and disconnected
+        // Mouse mover mode: Show full display
         updateMouseMoverDisplay();
     }
 }
