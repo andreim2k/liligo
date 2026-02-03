@@ -696,26 +696,28 @@ void updateMouseMoverDisplay() {
         timeUntilMove = (nextMoveDelay - elapsedSinceLastMove) / 1000;
     }
 
-    // COMPLETE CLEAR + REDRAW on mode switch
+    // On mode switch, do FULL redraw
     if (needsModeSwitch) {
-        lcd.fillScreen(COLOR_BG);  // Complete clear
-        needsFullRedraw = true;
+        lcd.fillScreen(COLOR_BG);
+        drawMouseMoverHeader();
+        needsFullRedraw = false;
+        needsModeSwitch = false;
+        lastUptimeSeconds = uptimeSeconds;
+        lastTimeUntilMove = timeUntilMove;
+        lastMoveCount = moveCount;
+        return;
     }
 
-    // Full redraw on first run or after mode switch
+    // On first run, do FULL redraw
     if (needsFullRedraw || needsDisplayRefresh) {
-        lcd.fillScreen(COLOR_BG);  // COMPLETELY CLEAR
-        drawMouseMoverHeader();  // THEN DRAW
+        lcd.fillScreen(COLOR_BG);
+        drawMouseMoverHeader();
         needsFullRedraw = false;
         needsDisplayRefresh = false;
         lastUptimeSeconds = uptimeSeconds;
         lastTimeUntilMove = timeUntilMove;
         lastMoveCount = moveCount;
-    }
-
-    // Clear mode switch flag
-    if (needsModeSwitch) {
-        needsModeSwitch = false;
+        return;
     }
 
     // Update uptime panel
@@ -743,31 +745,29 @@ void updateMouseMoverDisplay() {
 void updateKeyBridgeDisplay() {
     static bool needsFullRedraw = true;
     static uint32_t lastKeyCount = 0;
-    bool isTyping = (queueStart != queueEnd);
 
-    // COMPLETE CLEAR + REDRAW on mode switch
+    // On mode switch, do FULL redraw
     if (needsModeSwitch) {
-        lcd.fillScreen(COLOR_BG);  // Complete clear
-        needsFullRedraw = true;
-        needsModeSwitch = false;
-    }
-
-    // Always redraw when typing or on refresh
-    if (needsFullRedraw || needsDisplayRefresh || isTyping) {
-        if (needsFullRedraw || needsDisplayRefresh || needsModeSwitch) {
-            lcd.fillScreen(COLOR_BG);  // COMPLETELY CLEAR
-        }
-        showKeyBridgeStatus("Connected", COLOR_SUCCESS);  // THEN DRAW
+        lcd.fillScreen(COLOR_BG);
+        showKeyBridgeStatus("Connected", COLOR_SUCCESS);
         needsFullRedraw = false;
-        needsDisplayRefresh = false;
+        needsModeSwitch = false;
         lastKeyCount = keyCount;
+        return;  // Don't update partial, full redraw done
     }
 
-    // Update key count if changed
-    if (keyCount != lastKeyCount) {
-        updateKeyCount();
+    // On first run, do FULL redraw
+    if (needsFullRedraw) {
+        lcd.fillScreen(COLOR_BG);
+        showKeyBridgeStatus("Connected", COLOR_SUCCESS);
+        needsFullRedraw = false;
         lastKeyCount = keyCount;
+        return;
     }
+
+    // ALWAYS update key count (even if unchanged, keep refreshing)
+    updateKeyCount();
+    lastKeyCount = keyCount;
 }
 
 /**
