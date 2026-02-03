@@ -187,12 +187,15 @@ void showKeyBridgeStatus(const char* status, uint16_t statusColor) {
     lcd.setCursor(5, 25);
     lcd.println(status);
 
+    // COMPLETELY CLEAR the counter line area
+    lcd.fillRect(0, 40, lcd.width(), 20, COLOR_BG);
+
     // Show queue size while typing, otherwise show key count
     size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
     lcd.setTextColor(COLOR_TEXT);
     lcd.setCursor(5, 45);
     if (queue_size > 0) {
-        lcd.printf("Q:%d K:%d", queue_size, keyCount);
+        lcd.printf("Queue: %d", queue_size);
     } else {
         lcd.printf("Keys: %d", keyCount);
     }
@@ -200,15 +203,19 @@ void showKeyBridgeStatus(const char* status, uint16_t statusColor) {
 
 // Update key count display (no blinking)
 void updateKeyCount() {
-    lcd.setTextColor(COLOR_TEXT, COLOR_BG);
+    // COMPLETELY CLEAR the entire line first
+    lcd.fillRect(0, 40, lcd.width(), 20, COLOR_BG);  // Clear line area completely
+
+    // Now write fresh text
+    lcd.setTextColor(COLOR_TEXT);
     lcd.setCursor(5, 45);
 
     // Show queue status while typing
     size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
     if (queue_size > 0) {
-        lcd.printf("Queue: %d  ", queue_size);
+        lcd.printf("Queue: %d", queue_size);
     } else {
-        lcd.printf("Keys: %d  ", keyCount);
+        lcd.printf("Keys: %d", keyCount);
     }
 }
 
