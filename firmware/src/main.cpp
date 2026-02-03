@@ -127,8 +127,8 @@ String lastText = "";
 // Use circular buffer instead of String to avoid heap fragmentation
 const size_t MAX_QUEUE_SIZE = 65536; // 64KB buffer - with flow control, supports unlimited pastes
 char textQueueBuffer[MAX_QUEUE_SIZE];
-size_t queueStart = 0;
-size_t queueEnd = 0;
+volatile size_t queueStart = 0;  // VOLATILE: accessed by both BLE callback and main loop
+volatile size_t queueEnd = 0;    // VOLATILE: prevents compiler register caching
 unsigned long lastCharTime = 0;
 const unsigned long CHAR_INTERVAL = 2; // 2ms between chars for reliable typing
 
@@ -427,16 +427,20 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
         // Add chars to circular buffer queue (NON-BLOCKING)
         // Never block in BLE callback - it corrupts the BLE stack!
         // Just queue what we can, let main loop consume at its pace
+        // Use local copies of volatile pointers for consistency
+        size_t localQueueStart = queueStart;
+        size_t localQueueEnd = queueEnd;
         size_t chars_added = 0;
+
         for (size_t i = 0; i < buffer.length(); i++)
         {
-            size_t next = (queueEnd + 1) % MAX_QUEUE_SIZE;
+            size_t next = (localQueueEnd + 1) % MAX_QUEUE_SIZE;
 
             // Only add if space available (non-blocking check only)
-            if (next != queueStart)
+            if (next != localQueueStart)
             {
-                textQueueBuffer[queueEnd] = buffer[i];
-                queueEnd = next;
+                textQueueBuffer[localQueueEnd] = buffer[i];
+                localQueueEnd = next;
                 chars_added++;
             }
             else
@@ -451,7 +455,10 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
             }
         }
 
-        size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
+        // Update the actual volatile pointers after processing
+        queueEnd = localQueueEnd;
+
+        size_t queue_size = (localQueueEnd >= localQueueStart) ? (localQueueEnd - localQueueStart) : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
         Serial.printf("Text queued: %d/%d chars (queue: %d/%d)\n", chars_added, buffer.length(), queue_size, MAX_QUEUE_SIZE);
     }
 };
@@ -974,10 +981,14 @@ void loop()
 
     // Process queued text asynchronously (character by character with delays)
     // This keeps BLE responsive while typing
-    if (queueStart != queueEnd && getElapsedTime(lastCharTime, currentTime) >= CHAR_INTERVAL)
+    // Make local copies of volatile queue pointers to ensure consistency
+    size_t localQueueStart = queueStart;
+    size_t localQueueEnd = queueEnd;
+
+    if (localQueueStart != localQueueEnd && getElapsedTime(lastCharTime, currentTime) >= CHAR_INTERVAL)
     {
-        char c = textQueueBuffer[queueStart];
-        queueStart = (queueStart + 1) % MAX_QUEUE_SIZE;
+        char c = textQueueBuffer[localQueueStart];
+        queueStart = (localQueueStart + 1) % MAX_QUEUE_SIZE;
 
         Keyboard.press(c);
         Keyboard.releaseAll();
