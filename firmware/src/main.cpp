@@ -173,21 +173,24 @@ void showKeyBridgeStatus(const char* status, uint16_t statusColor) {
     delay(2);  // Small delay to ensure clear completes
     lcd.fillScreen(COLOR_BG);  // Double clear to be absolutely sure
 
-    // Header - "KeyBridge" title
-    lcd.setTextColor(COLOR_ACCENT);
+    // Header - "KeyBridge" title (with background to prevent artifacts)
+    lcd.setTextColor(COLOR_ACCENT, COLOR_BG);
     lcd.setTextSize(1);
     lcd.setCursor(5, 5);
-    lcd.println("KeyBridge");
+    lcd.println("KeyBridge     ");  // Padded to clear any remnants
 
     // Divider line
     lcd.drawFastHLine(0, 18, lcd.width(), COLOR_ACCENT);
 
-    // Status line
-    lcd.setTextColor(statusColor);
+    // Status line (with background color)
+    lcd.setTextColor(statusColor, COLOR_BG);
     lcd.setCursor(5, 25);
-    lcd.println(status);
+    lcd.printf("%-15s", status);  // Padded line
 
-    // Counter line with background color to ensure clean display
+    // Spacer line clear
+    lcd.fillRect(0, 36, lcd.width(), 8, COLOR_BG);
+
+    // Counter line with background color - CLEAN display
     size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
     lcd.setTextColor(COLOR_TEXT, COLOR_BG);
     lcd.setCursor(5, 45);
