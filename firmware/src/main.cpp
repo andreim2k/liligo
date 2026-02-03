@@ -168,29 +168,32 @@ void updateKeyBridgeDisplay();
 
 // Update KeyBridge display with status
 void showKeyBridgeStatus(const char* status, uint16_t statusColor) {
-    // COMPLETELY CLEAR THE ENTIRE SCREEN - fill with background color
+    // COMPLETELY CLEAR THE ENTIRE SCREEN
     lcd.fillScreen(COLOR_BG);
-    delay(2);  // Small delay to ensure clear completes
-    lcd.fillScreen(COLOR_BG);  // Double clear to be absolutely sure
+    delay(1);
+    lcd.fillScreen(COLOR_BG);
 
-    // Header - "KeyBridge" title (with background to prevent artifacts)
+    // TITLE LINE - clear first, then write
+    lcd.fillRect(0, 0, lcd.width(), 16, COLOR_BG);
     lcd.setTextColor(COLOR_ACCENT, COLOR_BG);
     lcd.setTextSize(1);
     lcd.setCursor(5, 5);
-    lcd.println("KeyBridge     ");  // Padded to clear any remnants
+    lcd.printf("%-15s", "KeyBridge");
 
-    // Divider line
+    // DIVIDER LINE
     lcd.drawFastHLine(0, 18, lcd.width(), COLOR_ACCENT);
 
-    // Status line (with background color)
+    // STATUS LINE - clear first, then write
+    lcd.fillRect(0, 20, lcd.width(), 14, COLOR_BG);
     lcd.setTextColor(statusColor, COLOR_BG);
     lcd.setCursor(5, 25);
-    lcd.printf("%-15s", status);  // Padded line
+    lcd.printf("%-15s", status);
 
-    // Spacer line clear
-    lcd.fillRect(0, 36, lcd.width(), 8, COLOR_BG);
+    // SPACER - clear completely
+    lcd.fillRect(0, 35, lcd.width(), 10, COLOR_BG);
 
-    // Counter line with background color - CLEAN display
+    // COUNTER LINE - clear first, then write
+    lcd.fillRect(0, 43, lcd.width(), 14, COLOR_BG);
     size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
     lcd.setTextColor(COLOR_TEXT, COLOR_BG);
     lcd.setCursor(5, 45);
@@ -203,7 +206,10 @@ void showKeyBridgeStatus(const char* status, uint16_t statusColor) {
 
 // Update key count display (no blinking)
 void updateKeyCount() {
-    // Set text color with background to overwrite old text
+    // COMPLETELY CLEAR the counter line before updating
+    lcd.fillRect(0, 43, lcd.width(), 14, COLOR_BG);
+
+    // Now write fresh text
     lcd.setTextColor(COLOR_TEXT, COLOR_BG);
     lcd.setCursor(5, 45);
 
