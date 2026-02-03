@@ -90,7 +90,9 @@ USBHIDMouse Mouse;
 // Operating modes
 enum OperatingMode { MODE_MOUSE_MOVER, MODE_KEYBOARD_BRIDGE };
 OperatingMode currentMode = MODE_MOUSE_MOVER;
+OperatingMode lastDisplayMode = MODE_MOUSE_MOVER;  // Track which screen is showing
 bool needsDisplayRefresh = true;
+bool needsModeSwitch = false;  // Force full screen clear on mode switch
 
 // Mouse mover timing variables
 unsigned long lastMoveTime = 0;
@@ -751,8 +753,17 @@ void updateKeyBridgeDisplay() {
 void updateDisplay() {
     // If we're typing (queue has chars), ALWAYS show keyboard screen
     bool isTyping = (queueStart != queueEnd);
+    OperatingMode displayMode = (isTyping || currentMode == MODE_KEYBOARD_BRIDGE) ? MODE_KEYBOARD_BRIDGE : MODE_MOUSE_MOVER;
 
-    if (isTyping || currentMode == MODE_KEYBOARD_BRIDGE) {
+    // Detect mode switch and force full screen clear
+    if (displayMode != lastDisplayMode) {
+        lcd.fillScreen(COLOR_BG);  // Complete screen clear
+        needsModeSwitch = true;
+        lastDisplayMode = displayMode;
+        needsDisplayRefresh = true;
+    }
+
+    if (displayMode == MODE_KEYBOARD_BRIDGE) {
         // Show keyboard screen while typing or connected
         updateKeyBridgeDisplay();
     } else {
