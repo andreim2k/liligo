@@ -768,7 +768,7 @@ void updateKeyBridgeDisplay() {
         needsFullRedraw = false;
         needsModeSwitch = false;
         lastKeyCount = keyCount;
-        return;  // Don't update partial, full redraw done
+        return;
     }
 
     // On first run, do FULL redraw
@@ -780,8 +780,10 @@ void updateKeyBridgeDisplay() {
         return;
     }
 
-    // ALWAYS update key count (even if unchanged, keep refreshing)
-    updateKeyCount();
+    // CRITICAL: ALWAYS do complete screen clear and redraw
+    // This ensures ZERO garbage pixels during typing
+    lcd.fillScreen(COLOR_BG);
+    showKeyBridgeStatus("Connected", COLOR_SUCCESS);
     lastKeyCount = keyCount;
 }
 
