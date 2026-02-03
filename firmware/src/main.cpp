@@ -424,24 +424,16 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
         // This prevents BLE callback from blocking during long typing sessions
         lastText = buffer;
 
-        // Add chars to circular buffer queue with flow control
-        // If buffer is full, WAIT for main loop to consume chars instead of dropping them
+        // Add chars to circular buffer queue (NON-BLOCKING)
+        // Never block in BLE callback - it corrupts the BLE stack!
+        // Just queue what we can, let main loop consume at its pace
         size_t chars_added = 0;
         for (size_t i = 0; i < buffer.length(); i++)
         {
             size_t next = (queueEnd + 1) % MAX_QUEUE_SIZE;
 
-            // Wait for space if buffer is full (allows unlimited clipboard pastes)
-            unsigned long waitStart = millis();
-            const unsigned long FLOW_CONTROL_TIMEOUT = 60000; // Wait up to 60 seconds
-
-            while (next == queueStart && (millis() - waitStart) < FLOW_CONTROL_TIMEOUT)
-            {
-                delay(1); // Let main loop consume characters (1ms at a time)
-                next = (queueEnd + 1) % MAX_QUEUE_SIZE;
-            }
-
-            if (next != queueStart) // Space is now available
+            // Only add if space available (non-blocking check only)
+            if (next != queueStart)
             {
                 textQueueBuffer[queueEnd] = buffer[i];
                 queueEnd = next;
@@ -449,14 +441,18 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
             }
             else
             {
-                // Timeout - buffer still full (shouldn't happen with normal usage)
-                Serial.printf("ERROR: Buffer timeout! Dropped %d characters\n", buffer.length() - i);
+                // Buffer full - can't add more this time
+                // Client should resend or wait, but DON'T BLOCK HERE!
+                if (i == 0)
+                {
+                    Serial.printf("WARNING: Queue full, couldn't queue text\n");
+                }
                 break;
             }
         }
 
         size_t queue_size = (queueEnd >= queueStart) ? (queueEnd - queueStart) : (MAX_QUEUE_SIZE - queueStart + queueEnd);
-        Serial.printf("Text queued: %d chars (queue: %d/%d)\n", chars_added, queue_size, MAX_QUEUE_SIZE);
+        Serial.printf("Text queued: %d/%d chars (queue: %d/%d)\n", chars_added, buffer.length(), queue_size, MAX_QUEUE_SIZE);
     }
 };
 
