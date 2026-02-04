@@ -16,7 +16,7 @@ from typing import Optional
 from bleak import BleakClient, BleakScanner
 
 import objc
-from Foundation import NSObject, NSRunLoop, NSDate
+from Foundation import NSObject, NSRunLoop, NSDate, NSTimer
 from AppKit import (
     NSApplication,
     NSStatusBar,
@@ -134,7 +134,6 @@ class KeyBridgeDelegate(NSObject):
                 self.click_timer.invalidate()
 
             # Set timer to show menu after threshold
-            from Foundation import NSTimer
             self.click_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
                 self.double_click_threshold,
                 self,

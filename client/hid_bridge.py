@@ -12,6 +12,7 @@ import sys
 import signal
 import subprocess
 import os
+import time
 from typing import Optional
 
 from bleak import BleakClient, BleakScanner
@@ -441,8 +442,6 @@ class KeyBridgeClient:
         """
         Save text file on Windows using PowerShell with proper escaping.
         """
-        import shlex
-
         print("Opening PowerShell on Windows...")
 
         # Sanitize filename - only allow alphanumerics, dash, underscore, dot
@@ -513,8 +512,6 @@ class KeyBridgeClient:
         """
         Save text file on Linux using cat heredoc with safe delimiter.
         """
-        import time
-
         # Sanitize filename - only allow safe characters
         safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_/')
         if not safe_filename or safe_filename.startswith('/'):
@@ -544,7 +541,6 @@ class KeyBridgeClient:
         Save binary file on Linux using base64 with safe filename handling.
         """
         import base64
-        import time
 
         # Sanitize filename - only allow safe characters
         safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_/')

@@ -18,7 +18,7 @@ python3 create_icon.py
 
 # Build the app
 echo "📦 Building app bundle..."
-python3 simple_setup.py py2app
+python3 setup.py py2app
 
 # Check if build succeeded
 if [ -d "dist/KeyBridge.app" ]; then

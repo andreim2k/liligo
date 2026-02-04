@@ -1,19 +1,8 @@
 from setuptools import setup
-import sys
 
-# Required packages that need to be included
+# Only external packages (built-ins and frameworks are handled via 'includes')
 PACKAGES = [
     'bleak',
-    'asyncio',
-    'threading',
-    'time',
-    'typing',
-    'subprocess',
-    'objc',
-    'Foundation',
-    'AppKit',
-    'PyObjCTools',
-    'Quartz',
 ]
 
 # Core dependencies

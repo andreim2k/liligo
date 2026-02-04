@@ -4,16 +4,17 @@ Generate a simple app icon for KeyBridge using PIL.
 Creates a basic keyboard-style icon with multiple sizes.
 """
 
+import os
+import sys
+import subprocess
+import shutil
+
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:
     print("Installing PIL/Pillow...")
-    import subprocess
     subprocess.run([sys.executable, "-m", "pip", "install", "Pillow"])
     from PIL import Image, ImageDraw, ImageFont
-
-import os
-import sys
 
 def create_icon():
     """Create app icon at different sizes."""
@@ -83,8 +84,7 @@ def create_icon():
     
     # Create iconset
     print("\nCreating iconset...")
-    import shutil
-    
+
     # Copy files to iconset with proper names
     shutil.copy("icon_16x16.png", "KeyBridge.iconset/icon_16x16.png")
     shutil.copy("icon_32x32.png", "KeyBridge.iconset/icon_16x16@2x.png")

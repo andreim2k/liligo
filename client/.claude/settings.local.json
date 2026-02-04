@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(git -C /Users/andrei/Development/liligo/client log --oneline)"
+    ]
+  }
+}
