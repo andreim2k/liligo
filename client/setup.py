@@ -1,4 +1,28 @@
 from setuptools import setup
+import sys
+
+# Required packages that need to be included
+PACKAGES = [
+    'bleak',
+    'asyncio',
+    'threading',
+    'time',
+    'typing',
+    'subprocess',
+    'objc',
+    'Foundation',
+    'AppKit',
+    'PyObjCTools',
+    'Quartz',
+]
+
+# Core dependencies
+INSTALL_REQUIRES = [
+    'bleak>=0.20.0',
+    'pyobjc-core>=9.0',
+    'pyobjc-framework-Cocoa>=9.0',
+    'pyobjc-framework-Quartz>=9.0',
+]
 
 APP = ['menubar_app.py']
 DATA_FILES = []
@@ -11,11 +35,31 @@ OPTIONS = {
         'CFBundleIdentifier': 'com.liligo.keybridge',
         'CFBundleVersion': '1.0.0',
         'CFBundleShortVersionString': '1.0.0',
+        'CFBundleExecutable': 'KeyBridge',
+        'CFBundlePackageType': 'APPL',
+        'CFBundleSignature': '????',
+        'NSHighResolutionCapable': True,
+        'LSMinimumSystemVersion': '10.15',
+        'NSRequiresAquaSystemAppearance': False,
+        'NSAppTransportSecurity': {
+            'NSAllowsArbitraryLoads': True
+        }
     },
-    'packages': ['rumps', 'bleak', 'asyncio'],
+    'iconfile': 'KeyBridge.icns',
+    'includes': PACKAGES,
+    'excludes': ['tkinter', 'test', 'unittest'],
+    'site_packages': True,
+    'strip': False,
+    'optimize': 0,
 }
 
 setup(
+    name='KeyBridge',
+    version='1.0.0',
+    description='LilyGo KeyBridge - Menu Bar BLE Keyboard Bridge',
+    author='LilyGo',
+    author_email='support@liligo.com',
+    url='https://liligo.com',
     app=APP,
     data_files=DATA_FILES,
     options={'py2app': OPTIONS},
