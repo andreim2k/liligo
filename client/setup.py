@@ -30,6 +30,7 @@ OPTIONS = {
         'NSHighResolutionCapable': True,
         'LSMinimumSystemVersion': '10.15',
         'NSRequiresAquaSystemAppearance': False,
+        'NSAccessibilityUsageDescription': 'KeyBridge needs accessibility access to enable the Fn+Cmd+V global hotkey for sending clipboard content.',
         'NSAppTransportSecurity': {
             'NSAllowsArbitraryLoads': True
         }

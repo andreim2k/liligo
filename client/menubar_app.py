@@ -26,7 +26,25 @@ from AppKit import (
     NSImage,
 )
 from PyObjCTools import AppHelper
-from Quartz import CGEventGetIntegerValueField, kCGKeyboardEventKeycode
+from Quartz import (
+    CGEventGetIntegerValueField,
+    kCGKeyboardEventKeycode,
+    CGEventTapCreate,
+    CGEventGetFlags,
+    kCGSessionEventTap,
+    kCGHeadInsertEventTap,
+    kCGEventTapOptionDefault,
+    CGEventMaskBit,
+    kCGEventKeyDown,
+    CGEventTapEnable,
+    CFMachPortCreateRunLoopSource,
+    CFRunLoopGetCurrent,
+    CFRunLoopAddSource,
+    CFRunLoopRemoveSource,
+    kCFRunLoopCommonModes,
+    kCGEventFlagMaskCommand,
+    kCGEventFlagMaskSecondaryFn,
+)
 
 # BLE UUIDs (must match firmware)
 SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
@@ -68,6 +86,8 @@ class KeyBridgeDelegate(NSObject):
         self.last_click_time = 0
         self.double_click_threshold = 0.4
         self.click_timer = None
+        self.event_tap = None
+        self.run_loop_source = None
 
         return self
 
@@ -104,6 +124,82 @@ class KeyBridgeDelegate(NSObject):
 
         # Start BLE thread
         self._start_ble_thread()
+
+        # Setup global hotkey
+        self._setup_event_tap()
+
+    def _setup_event_tap(self):
+        """Setup CGEventTap for global hotkey (Fn+Cmd+V)."""
+        print("[HOTKEY] Setting up Fn+Cmd+V event tap...")
+
+        # Create event tap callback
+        def event_tap_callback(proxy, event_type, event, refcon):
+            """CGEventTap callback - processes all keydown events."""
+            try:
+                # Only process keydown events
+                if event_type != kCGEventKeyDown:
+                    return event
+
+                # Get key code (9 = V key on macOS)
+                keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+
+                # Get modifier flags
+                flags = CGEventGetFlags(event)
+
+                # Check for Fn+Cmd+V
+                # V key = keycode 9
+                # Fn = kCGEventFlagMaskSecondaryFn (0x800000)
+                # Cmd = kCGEventFlagMaskCommand (0x100000)
+                has_fn = (flags & kCGEventFlagMaskSecondaryFn) != 0
+                has_cmd = (flags & kCGEventFlagMaskCommand) != 0
+
+                if keycode == 9 and has_fn and has_cmd:
+                    print("[HOTKEY] Fn+Cmd+V triggered!")
+                    # Schedule on main thread
+                    self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                        objc.selector(self.sendClipboard_, signature=b'v@:@'),
+                        None,
+                        False
+                    )
+                    # Consume event (don't pass through)
+                    return None
+
+                # Pass through all other events
+                return event
+
+            except Exception as e:
+                print(f"[HOTKEY] Error in callback: {e}")
+                return event
+
+        # Create the event tap
+        event_mask = CGEventMaskBit(kCGEventKeyDown)
+
+        self.event_tap = CGEventTapCreate(
+            kCGSessionEventTap,           # Session level
+            kCGHeadInsertEventTap,        # Insert at head
+            kCGEventTapOptionDefault,     # Default options
+            event_mask,                   # Key down events only
+            event_tap_callback,           # Callback function
+            None                          # User data
+        )
+
+        if not self.event_tap:
+            print("[HOTKEY] Failed to create event tap - check permissions")
+            return
+
+        # Create run loop source and add to current run loop
+        self.run_loop_source = CFMachPortCreateRunLoopSource(None, self.event_tap, 0)
+
+        CFRunLoopAddSource(
+            CFRunLoopGetCurrent(),
+            self.run_loop_source,
+            kCFRunLoopCommonModes
+        )
+
+        # Enable the event tap
+        CGEventTapEnable(self.event_tap, True)
+
+        print("[HOTKEY] Event tap active: Press Fn+Cmd+V")
 
     def statusItemClicked_(self, sender):
         """Handle click on status bar icon."""
@@ -228,6 +324,16 @@ class KeyBridgeDelegate(NSObject):
 
     def quitApp_(self, sender):
         """Quit the application."""
+        # Stop event tap
+        if self.event_tap:
+            CGEventTapEnable(self.event_tap, False)
+            if self.run_loop_source:
+                CFRunLoopRemoveSource(
+                    CFRunLoopGetCurrent(),
+                    self.run_loop_source,
+                    kCFRunLoopCommonModes
+                )
+
         # Cancel any pending timer
         if self.click_timer:
             self.click_timer.invalidate()
