@@ -235,27 +235,32 @@ class KeyBridgeDelegate(NSObject):
         self.ble_thread.start()
 
     def _setup_global_hotkey(self):
-        """Setup global hotkey Fn+Cmd+V to trigger send."""
+        """Setup global hotkey Ctrl+Cmd+V to trigger send."""
+        print("[HOTKEY] Setting up Ctrl+Cmd+V...")
+
         def handle_event(event):
-            # Check for Cmd+Fn+V using character interpretation (works on all layouts)
             flags = event.modifierFlags()
             chars = event.characters()
 
-            # Check for Cmd+Fn modifiers and V character
             is_cmd = (flags & NSCommandKeyMask) != 0
-            is_fn = (flags & NSFunctionKeyMask) != 0
+            is_ctrl = (flags & 0x40000) != 0  # NSControlKeyMask
 
-            if is_cmd and is_fn and chars and chars.lower() == 'v':
+            # Check for Ctrl+Cmd+V
+            if is_ctrl and is_cmd and chars and chars.lower() == 'v':
+                print("[HOTKEY] ✅ Ctrl+Cmd+V triggered!")
                 self.sendClipboard_(None)
-                return None  # Consume the event
+                return None
 
             return event
 
-        # Add global event monitor and store reference to prevent garbage collection
-        self.event_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            NSKeyDownMask,
-            handle_event
-        )
+        try:
+            self.event_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+                NSKeyDownMask,
+                handle_event
+            )
+            print("[HOTKEY] ✅ Hotkey active: Press Ctrl+Cmd+V")
+        except Exception as e:
+            print(f"[HOTKEY] ❌ Error: {e}")
 
     def quitApp_(self, sender):
         """Quit the application."""
