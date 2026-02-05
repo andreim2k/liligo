@@ -24,10 +24,6 @@ from AppKit import (
     NSMenuItem,
     NSVariableStatusItemLength,
     NSImage,
-    NSEvent,
-    NSKeyDownMask,
-    NSCommandKeyMask,
-    NSFunctionKeyMask,
 )
 from PyObjCTools import AppHelper
 from Quartz import CGEventGetIntegerValueField, kCGKeyboardEventKeycode
@@ -72,7 +68,6 @@ class KeyBridgeDelegate(NSObject):
         self.last_click_time = 0
         self.double_click_threshold = 0.4
         self.click_timer = None
-        self.event_monitor = None
 
         return self
 
@@ -110,9 +105,6 @@ class KeyBridgeDelegate(NSObject):
         # Start BLE thread
         self._start_ble_thread()
 
-        # Setup global hotkey (Fn+Cmd+V)
-        self._setup_global_hotkey()
-
     def statusItemClicked_(self, sender):
         """Handle click on status bar icon."""
         current_time = time.time()
@@ -149,7 +141,7 @@ class KeyBridgeDelegate(NSObject):
         self.status_item.popUpStatusItemMenu_(self.menu)
 
     def sendClipboard_(self, sender):
-        """Send clipboard content."""
+        """Send clipboard content to BLE device."""
         if self.sending:
             return
 
@@ -159,7 +151,7 @@ class KeyBridgeDelegate(NSObject):
             return
 
         self.sending = True
-        self._set_title("⌨️⏳")  # Use thread-safe method
+        self._set_title("⌨️⏳")
 
         # Run async in BLE thread
         if self.loop:
@@ -234,41 +226,8 @@ class KeyBridgeDelegate(NSObject):
         self.ble_thread = threading.Thread(target=run_loop, daemon=True)
         self.ble_thread.start()
 
-    def _setup_global_hotkey(self):
-        """Setup global hotkey Ctrl+Cmd+V to trigger send."""
-        print("[HOTKEY] Setting up Ctrl+Cmd+V...")
-
-        def handle_event(event):
-            flags = event.modifierFlags()
-            chars = event.characters()
-
-            is_cmd = (flags & NSCommandKeyMask) != 0
-            is_ctrl = (flags & 0x40000) != 0  # NSControlKeyMask
-
-            # Check for Ctrl+Cmd+V
-            if is_ctrl and is_cmd and chars and chars.lower() == 'v':
-                print("[HOTKEY] ✅ Ctrl+Cmd+V triggered!")
-                self.sendClipboard_(None)
-                return None
-
-            return event
-
-        try:
-            self.event_monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-                NSKeyDownMask,
-                handle_event
-            )
-            print("[HOTKEY] ✅ Hotkey active: Press Ctrl+Cmd+V")
-        except Exception as e:
-            print(f"[HOTKEY] ❌ Error: {e}")
-
     def quitApp_(self, sender):
         """Quit the application."""
-        # Stop event monitor
-        if self.event_monitor:
-            NSEvent.removeMonitor_(self.event_monitor)
-            self.event_monitor = None
-
         # Cancel any pending timer
         if self.click_timer:
             self.click_timer.invalidate()
