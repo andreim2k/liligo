@@ -8,7 +8,10 @@ Single-click: show menu
 """
 
 import asyncio
+import atexit
+import signal
 import subprocess
+import sys
 import threading
 import time
 from typing import Optional
@@ -51,6 +54,35 @@ SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 CHAR_TEXT_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 DEVICE_NAME = "KeyBridge"
+
+# Global delegate reference for signal handlers
+_delegate = None
+
+
+def cleanup_event_tap():
+    """Safely cleanup event tap if delegate exists."""
+    global _delegate
+    if _delegate:
+        try:
+            if _delegate.event_tap:
+                CGEventTapEnable(_delegate.event_tap, False)
+                print("[CLEANUP] Event tap disabled")
+            if _delegate.run_loop_source:
+                CFRunLoopRemoveSource(
+                    CFRunLoopGetCurrent(),
+                    _delegate.run_loop_source,
+                    kCFRunLoopCommonModes
+                )
+                print("[CLEANUP] Run loop source removed")
+        except Exception as e:
+            print(f"[CLEANUP] Error: {e}")
+
+
+def signal_handler(signum, frame):
+    """Handle signals and cleanup before exit."""
+    print(f"[SIGNAL] Received signal {signum}, cleaning up...")
+    cleanup_event_tap()
+    sys.exit(0)
 
 
 def get_clipboard():
@@ -347,13 +379,22 @@ class KeyBridgeDelegate(NSObject):
 
 
 def main():
+    global _delegate
+
+    # Register cleanup to run on any exit
+    atexit.register(cleanup_event_tap)
+
+    # Register signal handlers for cleanup
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     app = NSApplication.sharedApplication()
 
     # Make it a menu bar only app (no dock icon)
     app.setActivationPolicy_(1)  # NSApplicationActivationPolicyAccessory
 
-    delegate = KeyBridgeDelegate.alloc().init()
-    app.setDelegate_(delegate)
+    _delegate = KeyBridgeDelegate.alloc().init()
+    app.setDelegate_(_delegate)
 
     AppHelper.runEventLoop()
 
