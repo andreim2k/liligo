@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(wc:*)",
-      "Bash(git -C /Users/andrei/Development/liligo/client log --oneline)"
+      "Bash(git -C /Users/andrei/Development/liligo/client log --oneline)",
+      "Bash(git push:*)",
+      "Bash(./build_app.sh:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
