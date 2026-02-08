@@ -6,7 +6,11 @@
       "Bash(git push:*)",
       "Bash(./build_app.sh:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:gist.github.com)",
+      "Bash(./dist/KeyBridge.app/Contents/MacOS/KeyBridge)"
     ]
   }
 }

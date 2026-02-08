@@ -10,11 +10,9 @@ echo "🔨 Building KeyBridge macOS App..."
 # Clean previous builds
 echo "🧹 Cleaning previous builds..."
 rm -rf build/ dist/
-rm -rf KeyBridge.iconset icon_*.png KeyBridge.icns
 
-# Regenerate icon
-echo "🎨 Generating app icon..."
-python3 create_icon.py
+# Icon already exists (KeyBridge.icns)
+echo "🎨 Using existing app icon..."
 
 # Build the app
 echo "📦 Building app bundle..."

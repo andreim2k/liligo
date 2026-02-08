@@ -31,6 +31,7 @@ OPTIONS = {
         'LSMinimumSystemVersion': '10.15',
         'NSRequiresAquaSystemAppearance': False,
         'NSAccessibilityUsageDescription': 'KeyBridge needs accessibility access to enable the Fn+Cmd+V global hotkey for sending clipboard content.',
+        'NSInputMonitoringUsageDescription': 'KeyBridge needs input monitoring access to detect the Fn+Cmd+V keyboard shortcut.',
         'NSAppTransportSecurity': {
             'NSAllowsArbitraryLoads': True
         }

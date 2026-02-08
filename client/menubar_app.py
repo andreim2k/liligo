@@ -59,6 +59,45 @@ DEVICE_NAME = "KeyBridge"
 _delegate = None
 
 
+def _create_event_tap_callback(delegate):
+    """Create a C-level event tap callback that properly captures the delegate."""
+    def callback(proxy, event_type, event, refcon):
+        try:
+            # Only process keydown events
+            if event_type != kCGEventKeyDown:
+                return event
+
+            # Get key code (9 = V key on macOS)
+            keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+
+            # Get modifier flags
+            flags = CGEventGetFlags(event)
+
+            # Check for Fn+Cmd+V
+            has_fn = (flags & kCGEventFlagMaskSecondaryFn) != 0
+            has_cmd = (flags & kCGEventFlagMaskCommand) != 0
+
+            if keycode == 9 and has_fn and has_cmd:
+                print("[HOTKEY] Fn+Cmd+V triggered!")
+                # Schedule on main thread
+                delegate.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    objc.selector(delegate.sendClipboard_, signature=b'v@:@'),
+                    None,
+                    False
+                )
+                # Consume event (don't pass through)
+                return None
+
+            # Pass through all other events
+            return event
+
+        except Exception as e:
+            print(f"[HOTKEY] Error in callback: {e}")
+            return event
+
+    return callback
+
+
 def cleanup_event_tap():
     """Safely cleanup event tap if delegate exists."""
     global _delegate
@@ -120,6 +159,7 @@ class KeyBridgeDelegate(NSObject):
         self.click_timer = None
         self.event_tap = None
         self.run_loop_source = None
+        self.event_tap_callback = None
 
         return self
 
@@ -164,54 +204,19 @@ class KeyBridgeDelegate(NSObject):
         """Setup CGEventTap for global hotkey (Fn+Cmd+V)."""
         print("[HOTKEY] Setting up Fn+Cmd+V event tap...")
 
-        # Create event tap callback
-        def event_tap_callback(proxy, event_type, event, refcon):
-            """CGEventTap callback - processes all keydown events."""
-            try:
-                # Only process keydown events
-                if event_type != kCGEventKeyDown:
-                    return event
-
-                # Get key code (9 = V key on macOS)
-                keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
-
-                # Get modifier flags
-                flags = CGEventGetFlags(event)
-
-                # Check for Fn+Cmd+V
-                # V key = keycode 9
-                # Fn = kCGEventFlagMaskSecondaryFn (0x800000)
-                # Cmd = kCGEventFlagMaskCommand (0x100000)
-                has_fn = (flags & kCGEventFlagMaskSecondaryFn) != 0
-                has_cmd = (flags & kCGEventFlagMaskCommand) != 0
-
-                if keycode == 9 and has_fn and has_cmd:
-                    print("[HOTKEY] Fn+Cmd+V triggered!")
-                    # Schedule on main thread
-                    self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                        objc.selector(self.sendClipboard_, signature=b'v@:@'),
-                        None,
-                        False
-                    )
-                    # Consume event (don't pass through)
-                    return None
-
-                # Pass through all other events
-                return event
-
-            except Exception as e:
-                print(f"[HOTKEY] Error in callback: {e}")
-                return event
-
         # Create the event tap
         event_mask = CGEventMaskBit(kCGEventKeyDown)
+
+        # Create callback with proper closure over delegate
+        # Store it to prevent garbage collection
+        self.event_tap_callback = _create_event_tap_callback(self)
 
         self.event_tap = CGEventTapCreate(
             kCGSessionEventTap,           # Session level
             kCGHeadInsertEventTap,        # Insert at head
             kCGEventTapOptionDefault,     # Default options
             event_mask,                   # Key down events only
-            event_tap_callback,           # Callback function
+            self.event_tap_callback,      # Callback function
             None                          # User data
         )
 
