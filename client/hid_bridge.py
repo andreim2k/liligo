@@ -445,6 +445,7 @@ class KeyBridgeClient:
         print("Opening PowerShell on Windows...")
 
         # Sanitize filename - only allow alphanumerics, dash, underscore, dot
+        # This filter prevents path traversal and special character injection
         safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_')
         if not safe_filename:
             safe_filename = "untitled.txt"
@@ -479,6 +480,7 @@ class KeyBridgeClient:
         import base64
 
         # Sanitize filename - only allow alphanumerics, dash, underscore, dot
+        # This filter prevents path traversal and special character injection
         safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_')
         if not safe_filename:
             safe_filename = "file.bin"
@@ -512,9 +514,9 @@ class KeyBridgeClient:
         """
         Save text file on Linux using cat heredoc with safe delimiter.
         """
-        # Sanitize filename - only allow safe characters
-        safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_/')
-        if not safe_filename or safe_filename.startswith('/'):
+        # Sanitize filename - only allow safe characters (no / to prevent path traversal)
+        safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_')
+        if not safe_filename:
             safe_filename = "untitled.txt"
 
         print(f"Saving {safe_filename} on Linux...")
@@ -542,9 +544,9 @@ class KeyBridgeClient:
         """
         import base64
 
-        # Sanitize filename - only allow safe characters
-        safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_/')
-        if not safe_filename or safe_filename.startswith('/'):
+        # Sanitize filename - only allow safe characters (no / to prevent path traversal)
+        safe_filename = "".join(c for c in filename if c.isalnum() or c in '.-_')
+        if not safe_filename:
             safe_filename = "file.bin"
 
         b64_data = base64.b64encode(data).decode('ascii')

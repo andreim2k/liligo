@@ -16,7 +16,7 @@ import threading
 import time
 from typing import Optional
 
-from bleak import BleakClient, BleakScanner
+from bleak import BleakClient, BleakScanner, BleakError
 
 import objc
 from Foundation import NSObject, NSRunLoop, NSDate, NSTimer
@@ -133,12 +133,25 @@ def get_clipboard():
         return None
 
 
+def escape_applescript(s):
+    """Escape special characters for AppleScript strings."""
+    # Escape backslash first, then double quotes
+    s = s.replace("\\", "\\\\")
+    s = s.replace('"', '\\"')
+    return s
+
+
 def send_notification(title, subtitle, message):
     """Send macOS notification."""
     try:
+        # Escape all string interpolations to prevent AppleScript injection
+        safe_title = escape_applescript(title)
+        safe_subtitle = escape_applescript(subtitle)
+        safe_message = escape_applescript(message)
+
         subprocess.run([
             'osascript', '-e',
-            f'display notification "{message}" with title "{title}" subtitle "{subtitle}"'
+            f'display notification "{safe_message}" with title "{safe_title}" subtitle "{safe_subtitle}"'
         ], capture_output=True, timeout=2)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass  # Silent fail - not critical
@@ -328,7 +341,7 @@ class KeyBridgeDelegate(NSObject):
 
             send_notification("KeyBridge", "Sent", f"{len(text)} chars")
 
-        except Exception as e:
+        except (BleakError, OSError, asyncio.TimeoutError) as e:
             send_notification("KeyBridge", "Error", str(e)[:50])
 
         finally:

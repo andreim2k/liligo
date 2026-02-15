@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # KeyBridge Install Script
-# Installs the built app to the Applications folder
+# Installs the built app to the user's Applications folder
 
 set -e
 
 APP_BUNDLE="dist/KeyBridge.app"
-INSTALL_PATH="/Applications/KeyBridge.app"
+INSTALL_PATH="$HOME/Applications/KeyBridge.app"
 
-echo "📱 Installing KeyBridge to Applications folder..."
+echo "📱 Installing KeyBridge to $HOME/Applications folder..."
 
 # Check if app exists
 if [ ! -d "$APP_BUNDLE" ]; then
@@ -16,6 +16,9 @@ if [ ! -d "$APP_BUNDLE" ]; then
     echo "🔨 Please run ./build_app.sh first to build the app"
     exit 1
 fi
+
+# Create Applications directory if it doesn't exist
+mkdir -p "$HOME/Applications"
 
 # Check if already installed and ask to replace
 if [ -d "$INSTALL_PATH" ]; then
@@ -27,22 +30,17 @@ if [ -d "$INSTALL_PATH" ]; then
         exit 1
     fi
     echo "🗑️  Removing existing installation..."
-    sudo rm -rf "$INSTALL_PATH"
+    rm -rf "$INSTALL_PATH"
 fi
 
 # Copy app to Applications
-echo "📋 Copying app to Applications..."
-sudo cp -R "$APP_BUNDLE" "$INSTALL_PATH"
+echo "📋 Copying app to $HOME/Applications..."
+cp -R "$APP_BUNDLE" "$INSTALL_PATH"
 
-# Set proper permissions
-echo "🔐 Setting permissions..."
-sudo chown -R root:wheel "$INSTALL_PATH"
-sudo chmod -R 755 "$INSTALL_PATH"
-
-echo "✅ KeyBridge successfully installed to /Applications/"
+echo "✅ KeyBridge successfully installed to $HOME/Applications/"
 echo ""
 echo "🚀 To launch KeyBridge:"
-echo "   open /Applications/KeyBridge.app"
+echo "   open $HOME/Applications/KeyBridge.app"
 echo ""
 echo "⌨️  The app will appear in your menu bar (⌨️)"
 echo "   • Double-click to send clipboard content"

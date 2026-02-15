@@ -9,6 +9,7 @@
  */
 
 #include <Arduino.h>
+#include <atomic>
 #include <APA102.h>
 #include <LovyanGFX.hpp>
 #include <USB.h>
@@ -112,24 +113,32 @@ unsigned long pausedTimeRemaining = 0; // Store remaining time when BLE connects
 #define CHAR_TEXT_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define CHAR_HID_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
+// SECURITY NOTE: This firmware intentionally provides no authentication or encryption.
+// BLE pairing is disabled to maximize ease of use. Anyone within Bluetooth range can
+// send keystrokes to this device. Use only in trusted environments. For secure
+// applications, implement BLE security via BLEDevice::setSecurityCallbacks() and
+// appropriate characteristic permissions.
+
 // BLE state
 BLEServer *pServer = nullptr;
 BLECharacteristic *pTextCharacteristic = nullptr;
 BLECharacteristic *pHidCharacteristic = nullptr;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
+unsigned int reconnectAttempts = 0;
+unsigned long lastReconnectTime = 0;
 
 // Stats
 uint32_t keyCount = 0;
-String lastText = "";
 
 // Text queue for async processing (prevents BLE callback blocking)
 // Use circular buffer instead of String to avoid heap fragmentation
 const size_t MAX_QUEUE_SIZE = 65536; // 64KB buffer - with flow control, supports unlimited pastes
+// Memory budget: ~12.5% of ESP32-S3's 512KB internal SRAM (leaves ~448KB for heap/code)
 char textQueueBuffer[MAX_QUEUE_SIZE];
-volatile size_t queueStart = 0;  // VOLATILE: accessed by both BLE callback and main loop
-volatile size_t queueEnd = 0;    // VOLATILE: prevents compiler register caching
-volatile size_t peakQueueSize = 0;  // Track max queue size for progress bar
+std::atomic<size_t> queueStart(0);  // ATOMIC: accessed by both BLE callback and main loop
+std::atomic<size_t> queueEnd(0);    // ATOMIC: prevents data races with acquire/release semantics
+std::atomic<size_t> peakQueueSize(0);  // Track max queue size for progress bar
 unsigned long lastCharTime = 0;
 const unsigned long CHAR_INTERVAL = 10; // 10ms between chars - slower but more stable for large pastes
 
@@ -343,6 +352,7 @@ class ServerCallbacks : public BLEServerCallbacks
     void onConnect(BLEServer *pServer) override
     {
         deviceConnected = true;
+        reconnectAttempts = 0;  // Reset backoff on successful connection
 
         // Store remaining countdown time before switching modes
         unsigned long elapsed = getElapsedTime(lastMoveTime, millis());
@@ -392,9 +402,9 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
         // IMPORTANT: Do NOT use String class - it causes heap fragmentation!
         // Filter and queue directly from BLE data to circular buffer
 
-        // Use local copies of volatile pointers for consistency
-        size_t localQueueStart = queueStart;
-        size_t localQueueEnd = queueEnd;
+        // Use local copies of atomics for consistency
+        size_t localQueueStart = queueStart.load(std::memory_order_acquire);
+        size_t localQueueEnd = queueEnd.load(std::memory_order_acquire);
         size_t chars_added = 0;
 
         // Process and queue directly in one pass (no intermediate String buffer)
@@ -411,6 +421,9 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
                     i += 2;
                 else if ((c & 0xF8) == 0xF0)
                     i += 3;
+                // Bounds check: clamp skip distance to remaining buffer
+                if (i >= value.length())
+                    break;
                 continue;  // Skip this byte, continue to next
             }
 
@@ -442,8 +455,8 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
             }
         }
 
-        // Update the actual volatile pointers only once after processing
-        queueEnd = localQueueEnd;
+        // Update the actual atomic pointers only once after processing
+        queueEnd.store(localQueueEnd, std::memory_order_release);
 
         size_t queue_size = (localQueueEnd >= localQueueStart) ? (localQueueEnd - localQueueStart) : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
         if (chars_added > 0)
@@ -479,15 +492,7 @@ class HidCharCallbacks : public BLECharacteristicCallbacks
  */
 unsigned long getElapsedTime(unsigned long start, unsigned long current)
 {
-    if (current >= start)
-    {
-        return current - start;
-    }
-    else
-    {
-        // Handle wrap-around: millis() overflowed
-        return (ULONG_MAX - start) + current + 1;
-    }
+    return current - start;  // Unsigned subtraction handles overflow correctly
 }
 
 /**
@@ -829,19 +834,20 @@ void updateBLEDisplay()
     lastUpdate = millis();
 
     // Get current queue status
-    size_t localQueueStart = queueStart;
-    size_t localQueueEnd = queueEnd;
+    size_t localQueueStart = queueStart.load(std::memory_order_relaxed);
+    size_t localQueueEnd = queueEnd.load(std::memory_order_relaxed);
     size_t currentQueueSize = (localQueueEnd >= localQueueStart)
         ? (localQueueEnd - localQueueStart)
         : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
 
     // Calculate progress (how much has been consumed)
     float progress = 0.0;
-    if (peakQueueSize > 0)
+    size_t peak = peakQueueSize.load(std::memory_order_relaxed);
+    if (peak > 0)
     {
         size_t remaining = currentQueueSize;
-        size_t consumed = peakQueueSize - remaining;
-        progress = (float)consumed / (float)peakQueueSize;
+        size_t consumed = peak - remaining;
+        progress = (float)consumed / (float)peak;
         if (progress > 1.0) progress = 1.0;
     }
 
@@ -903,7 +909,8 @@ void updateBLEDisplay()
     lcd.setTextColor(COLOR_TEXT);
     lcd.setCursor(40, 65);
     char queueText[24];
-    sprintf(queueText, "%d/%d bytes", currentQueueSize, peakQueueSize);
+    size_t peakSize = peakQueueSize.load(std::memory_order_relaxed);
+    sprintf(queueText, "%d/%d bytes", currentQueueSize, peakSize);
     lcd.print(queueText);
 
     // Typing speed indicator - clear and redraw
@@ -938,7 +945,9 @@ void updateBLEDisplay()
 void updateDisplay()
 {
     // If we're typing (queue has chars), ONLY blink LED - don't touch display at all
-    bool isTyping = (queueStart != queueEnd);
+    size_t start = queueStart.load(std::memory_order_relaxed);
+    size_t end = queueEnd.load(std::memory_order_relaxed);
+    bool isTyping = (start != end);
     OperatingMode displayMode = (isTyping || currentMode == MODE_KEYBOARD_BRIDGE) ? MODE_KEYBOARD_BRIDGE : MODE_MOUSE_MOVER;
 
     // Detect mode switch
@@ -954,7 +963,7 @@ void updateDisplay()
             lcd.fillScreen(COLOR_BG);
             delay(1);
             lcd.fillScreen(COLOR_BG);
-            peakQueueSize = 0;  // Reset peak for new paste session
+            peakQueueSize.store(0, std::memory_order_relaxed);  // Reset peak for new paste session
         }
         else if (displayMode == MODE_MOUSE_MOVER)
         {
@@ -963,7 +972,7 @@ void updateDisplay()
             delay(1);
             lcd.fillScreen(COLOR_BG);
             setLed(0, 50, 0); // Reset LED to mouse mover green
-            peakQueueSize = 0;  // Reset peak
+            peakQueueSize.store(0, std::memory_order_relaxed);  // Reset peak
         }
     }
 
@@ -972,25 +981,20 @@ void updateDisplay()
         // BLE mode: Display typing progress on LCD
 
         // Track peak queue size for progress calculation
-        size_t localQueueStart = queueStart;
-        size_t localQueueEnd = queueEnd;
+        size_t localQueueStart = queueStart.load(std::memory_order_acquire);
+        size_t localQueueEnd = queueEnd.load(std::memory_order_acquire);
         size_t currentQueueSize = (localQueueEnd >= localQueueStart)
             ? (localQueueEnd - localQueueStart)
             : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
 
-        if (currentQueueSize > peakQueueSize)
+        size_t peak = peakQueueSize.load(std::memory_order_relaxed);
+        if (currentQueueSize > peak)
         {
-            peakQueueSize = currentQueueSize;
+            peakQueueSize.store(currentQueueSize, std::memory_order_relaxed);
         }
 
         // Show progress bar on LCD
         updateBLEDisplay();
-
-        // Reset peak when queue is empty (typing finished)
-        if (currentQueueSize == 0)
-        {
-            peakQueueSize = 0;
-        }
 
         return; // Exit immediately after BLE display
     }
@@ -1042,19 +1046,24 @@ void setup()
     BLEDevice::init("KeyBridge");
     BLEDevice::setMTU(517); // Max BLE 5.0 MTU
     pServer = BLEDevice::createServer();
-    pServer->setCallbacks(new ServerCallbacks());
+
+    // Use static instances to avoid memory leaks
+    static ServerCallbacks serverCallbacks;
+    pServer->setCallbacks(&serverCallbacks);
 
     BLEService *pService = pServer->createService(SERVICE_UUID);
 
     pTextCharacteristic = pService->createCharacteristic(
         CHAR_TEXT_UUID,
         BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
-    pTextCharacteristic->setCallbacks(new TextCharCallbacks());
+    static TextCharCallbacks textCharCallbacks;
+    pTextCharacteristic->setCallbacks(&textCharCallbacks);
 
     pHidCharacteristic = pService->createCharacteristic(
         CHAR_HID_UUID,
         BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
-    pHidCharacteristic->setCallbacks(new HidCharCallbacks());
+    static HidCharCallbacks hidCharCallbacks;
+    pHidCharacteristic->setCallbacks(&hidCharCallbacks);
 
     pService->start();
 
@@ -1062,7 +1071,7 @@ void setup()
     pAdvertising->addServiceUUID(SERVICE_UUID);
     pAdvertising->setScanResponse(true);
     pAdvertising->setMinPreferred(0x06);
-    pAdvertising->setMinPreferred(0x12);
+    pAdvertising->setMaxPreferred(0x12);
     BLEDevice::startAdvertising();
 
     // Initialize mouse mover timing
@@ -1082,11 +1091,22 @@ void loop()
 {
     unsigned long currentTime = millis();
 
-    // Handle BLE reconnection
+    // Handle BLE reconnection with exponential backoff
     if (!deviceConnected && oldDeviceConnected)
     {
-        delay(500);
-        BLEDevice::startAdvertising();
+        // Calculate exponential backoff: 500ms, 1s, 2s, 4s, ..., capped at 10s
+        unsigned long backoffMs = 500UL * (1UL << reconnectAttempts);  // 500ms * 2^attempts
+        if (backoffMs > 10000)
+            backoffMs = 10000;  // Cap at 10 seconds
+
+        if (currentTime >= lastReconnectTime + backoffMs)
+        {
+            Serial.printf("BLE reconnect attempt %u (backoff: %lums)\n", reconnectAttempts, backoffMs);
+            BLEDevice::startAdvertising();
+            reconnectAttempts++;
+            lastReconnectTime = currentTime;
+        }
+
         oldDeviceConnected = deviceConnected;
     }
 
@@ -1097,17 +1117,16 @@ void loop()
 
     // Process queued text asynchronously (character by character with delays)
     // This keeps BLE responsive while typing
-    // Make local copies of volatile queue pointers to ensure consistency
-    size_t localQueueStart = queueStart;
-    size_t localQueueEnd = queueEnd;
+    // Make local copies of atomic queue pointers to ensure consistency
+    size_t localQueueStart = queueStart.load(std::memory_order_acquire);
+    size_t localQueueEnd = queueEnd.load(std::memory_order_acquire);
 
     if (localQueueStart != localQueueEnd && getElapsedTime(lastCharTime, currentTime) >= CHAR_INTERVAL)
     {
         char c = textQueueBuffer[localQueueStart];
-        queueStart = (localQueueStart + 1) % MAX_QUEUE_SIZE;
+        queueStart.store((localQueueStart + 1) % MAX_QUEUE_SIZE, std::memory_order_release);
 
-        Keyboard.press(c);
-        Keyboard.releaseAll();
+        Keyboard.write(c);  // write() handles shift mapping automatically
         keyCount++;
         lastCharTime = currentTime;
         // No display update for BLE mode - LED only
@@ -1138,7 +1157,7 @@ void loop()
     {
         updateDisplay();
         lastDisplayUpdate = currentTime;
-        pulsePhase = (pulsePhase + 1) % 255;
+        pulsePhase++;  // uint8_t naturally wraps at 256
     }
 
     delay(1); // Reduced from 10ms to allow faster character processing

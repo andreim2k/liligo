@@ -7,10 +7,10 @@ PACKAGES = [
 
 # Core dependencies
 INSTALL_REQUIRES = [
-    'bleak>=0.20.0',
-    'pyobjc-core>=9.0',
-    'pyobjc-framework-Cocoa>=9.0',
-    'pyobjc-framework-Quartz>=9.0',
+    'bleak>=0.21.0,<1.0.0',
+    'pyobjc-core>=10.0,<11.0',
+    'pyobjc-framework-Cocoa>=10.0,<11.0',
+    'pyobjc-framework-Quartz>=10.0,<11.0',
 ]
 
 APP = ['menubar_app.py']
