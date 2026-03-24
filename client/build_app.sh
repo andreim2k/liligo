@@ -16,7 +16,7 @@ echo "🎨 Using existing app icon..."
 
 # Build the app
 echo "📦 Building app bundle..."
-python3 setup.py py2app
+pyinstaller KeyBridge.spec --clean
 
 # Check if build succeeded
 if [ -d "dist/KeyBridge.app" ]; then
