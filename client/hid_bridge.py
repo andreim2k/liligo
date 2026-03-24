@@ -18,6 +18,21 @@ from typing import Optional
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 
+# Box-drawing characters to ASCII
+_BOX_CHARS = {
+    '┌': '+', '┐': '+', '└': '+', '┘': '+',
+    '├': '+', '┤': '+', '┬': '+', '┴': '+', '┼': '+',
+    '─': '-', '│': '|',
+    '╔': '+', '╗': '+', '╚': '+', '╝': '+',
+    '╠': '+', '╣': '+', '╦': '+', '╩': '+', '╬': '+',
+    '═': '=', '║': '|',
+}
+
+
+def convert_box_chars(text: str) -> str:
+    """Convert box-drawing characters to ASCII equivalents."""
+    return ''.join(_BOX_CHARS.get(c, c) for c in text)
+
 
 def get_clipboard():
     """Get clipboard content on macOS, preserving all formatting."""
@@ -175,6 +190,9 @@ class KeyBridgeClient:
         if not self.client or not self.client.is_connected:
             print("Not connected")
             return
+
+        # Convert box-drawing characters to ASCII
+        text = convert_box_chars(text)
 
         # Check for non-ASCII characters
         non_ascii = [(i, c, ord(c)) for i, c in enumerate(text) if ord(c) > 127]

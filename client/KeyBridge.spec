@@ -47,4 +47,7 @@ app = BUNDLE(
     name='KeyBridge.app',
     icon=None,
     bundle_identifier=None,
+    info_plist={
+        'NSBluetoothAlwaysUsageDescription': 'KeyBridge needs Bluetooth to send keystrokes to the USB dongle.',
+    },
 )

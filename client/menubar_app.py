@@ -18,6 +18,22 @@ from typing import Optional
 
 from bleak import BleakClient, BleakScanner, BleakError
 
+# Box-drawing characters to ASCII
+_BOX_CHARS = {
+    '┌': '+', '┐': '+', '└': '+', '┘': '+',
+    '├': '+', '┤': '+', '┬': '+', '┴': '+', '┼': '+',
+    '─': '-', '│': '|',
+    '╔': '+', '╗': '+', '╚': '+', '╝': '+',
+    '╠': '+', '╣': '+', '╦': '+', '╩': '+', '╬': '+',
+    '═': '=', '║': '|',
+}
+
+
+def convert_box_chars(text: str) -> str:
+    """Convert box-drawing characters to ASCII equivalents."""
+    return ''.join(_BOX_CHARS.get(c, c) for c in text)
+
+
 import objc
 from Foundation import NSObject, NSRunLoop, NSDate, NSTimer
 from AppKit import (
@@ -328,6 +344,7 @@ class KeyBridgeDelegate(NSObject):
 
             # Send text
             self._set_title("⌨️📤")
+            text = convert_box_chars(text)
             encoded = text.encode('utf-8')
             for i in range(0, len(encoded), chunk_size):
                 chunk = encoded[i:i + chunk_size]
