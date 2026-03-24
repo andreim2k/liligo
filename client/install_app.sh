@@ -6,9 +6,9 @@
 set -e
 
 APP_BUNDLE="dist/KeyBridge.app"
-INSTALL_PATH="$HOME/Applications/KeyBridge.app"
+INSTALL_PATH="/Applications/KeyBridge.app"
 
-echo "📱 Installing KeyBridge to $HOME/Applications folder..."
+echo "📱 Installing KeyBridge to /Applications folder..."
 
 # Check if app exists
 if [ ! -d "$APP_BUNDLE" ]; then
@@ -18,7 +18,7 @@ if [ ! -d "$APP_BUNDLE" ]; then
 fi
 
 # Create Applications directory if it doesn't exist
-mkdir -p "$HOME/Applications"
+mkdir -p "/Applications"
 
 # Check if already installed and ask to replace
 if [ -d "$INSTALL_PATH" ]; then
@@ -34,13 +34,13 @@ if [ -d "$INSTALL_PATH" ]; then
 fi
 
 # Copy app to Applications
-echo "📋 Copying app to $HOME/Applications..."
+echo "📋 Copying app to /Applications..."
 cp -R "$APP_BUNDLE" "$INSTALL_PATH"
 
-echo "✅ KeyBridge successfully installed to $HOME/Applications/"
+echo "✅ KeyBridge successfully installed to /Applications/"
 echo ""
 echo "🚀 To launch KeyBridge:"
-echo "   open $HOME/Applications/KeyBridge.app"
+echo "   open /Applications/KeyBridge.app"
 echo ""
 echo "⌨️  The app will appear in your menu bar (⌨️)"
 echo "   • Double-click to send clipboard content"
