@@ -124,7 +124,7 @@ class KeyBridgeDelegate(NSObject):
         self.double_click_threshold = 0.4
         self.click_timer = None
         self.listener = None
-        self.cmd_pressed = False
+        self.ctrl_pressed = False
         self.shift_pressed = False
 
         return self
@@ -167,21 +167,21 @@ class KeyBridgeDelegate(NSObject):
         self._setup_listener()
 
         # Notify that app started
-        send_notification("KeyBridge", "Ready", "Press Cmd+Shift+V to send clipboard")
+        send_notification("KeyBridge", "Ready", "Press Ctrl+Shift+V to send clipboard")
 
     def _setup_listener(self):
-        """Setup pynput keyboard listener for global hotkey (Cmd+Shift+V)."""
-        print("[HOTKEY] Setting up Cmd+Shift+V listener...")
+        """Setup pynput keyboard listener for global hotkey (Ctrl+Shift+V)."""
+        print("[HOTKEY] Setting up Ctrl+Shift+V listener...")
 
         def on_press(key):
             try:
-                if key in (keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r):
-                    self.cmd_pressed = True
+                if key == keyboard.Key.ctrl:
+                    self.ctrl_pressed = True
                 elif key == keyboard.Key.shift:
                     self.shift_pressed = True
                 elif key == keyboard.Key.v:
-                    if self.cmd_pressed and self.shift_pressed:
-                        print("[HOTKEY] Cmd+Shift+V triggered!")
+                    if self.ctrl_pressed and self.shift_pressed:
+                        print("[HOTKEY] Ctrl+Shift+V triggered!")
                         self.performSelectorOnMainThread_withObject_waitUntilDone_(
                             objc.selector(self.sendClipboard_, signature=b'v@:@'),
                             None,
@@ -192,8 +192,8 @@ class KeyBridgeDelegate(NSObject):
 
         def on_release(key):
             try:
-                if key in (keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r):
-                    self.cmd_pressed = False
+                if key == keyboard.Key.ctrl:
+                    self.ctrl_pressed = False
                 elif key == keyboard.Key.shift:
                     self.shift_pressed = False
             except AttributeError:
@@ -202,7 +202,7 @@ class KeyBridgeDelegate(NSObject):
         try:
             self.listener = keyboard.Listener(on_press=on_press, on_release=on_release)
             self.listener.start()
-            print("[HOTKEY] Listener active: Press Cmd+Shift+V")
+            print("[HOTKEY] Listener active: Press Ctrl+Shift+V")
         except Exception as e:
             print(f"[HOTKEY] Failed to start listener: {e}")
             send_notification("KeyBridge", "Error", f"Failed to start hotkey listener: {str(e)[:50]}")
