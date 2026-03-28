@@ -174,9 +174,6 @@ class KeyBridgeDelegate(NSObject):
         # Setup global hotkey
         self._setup_listener()
 
-        # Notify that app started
-        send_notification("KeyBridge", "Ready", "Press Ctrl+Shift+V to send clipboard")
-
     def _setup_listener(self):
         """Setup pynput keyboard listener for global hotkey (Ctrl+Shift+V)."""
         print("[HOTKEY] Setting up Ctrl+Shift+V listener...")
@@ -193,7 +190,6 @@ class KeyBridgeDelegate(NSObject):
                 elif hasattr(key, 'char') and key.char == 'v':
                     if self.ctrl_pressed and self.shift_pressed:
                         print("[HOTKEY] Ctrl+Shift+V triggered!")
-                        send_notification("KeyBridge", "Hotkey Triggered", "Ctrl+Shift+V detected!")
                         self.performSelectorOnMainThread_withObject_waitUntilDone_(
                             objc.selector(self.sendClipboard_, signature=b'v@:@'),
                             None,
@@ -202,7 +198,6 @@ class KeyBridgeDelegate(NSObject):
                 elif key == keyboard.Key.v:
                     if self.ctrl_pressed and self.shift_pressed:
                         print("[HOTKEY] Ctrl+Shift+V triggered!")
-                        send_notification("KeyBridge", "Hotkey Triggered", "Ctrl+Shift+V detected!")
                         self.performSelectorOnMainThread_withObject_waitUntilDone_(
                             objc.selector(self.sendClipboard_, signature=b'v@:@'),
                             None,
@@ -224,11 +219,9 @@ class KeyBridgeDelegate(NSObject):
             self.listener = keyboard.Listener(on_press=on_press, on_release=on_release)
             self.listener.start()
             print("[HOTKEY] Listener active: Press Ctrl+Shift+V")
-            send_notification("KeyBridge", "Hotkey Ready", "Ctrl+Shift+V listener is active")
         except Exception as e:
             error_msg = str(e)
             print(f"[HOTKEY] Failed to start listener: {error_msg}")
-            send_notification("KeyBridge", "Listener Error", f"Hotkey failed: {error_msg[:40]}")
 
     def statusItemClicked_(self, sender):
         """Handle click on status bar icon."""
