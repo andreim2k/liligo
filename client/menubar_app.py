@@ -18,14 +18,27 @@ from typing import Optional
 
 from bleak import BleakClient, BleakScanner, BleakError
 
-# Box-drawing characters to ASCII
-_BOX_CHARS = {
+# Unicode to ASCII character mappings
+_UNICODE_MAP = {
+    # Box-drawing characters
     '┌': '+', '┐': '+', '└': '+', '┘': '+',
     '├': '+', '┤': '+', '┬': '+', '┴': '+', '┼': '+',
     '─': '-', '│': '|',
     '╔': '+', '╗': '+', '╚': '+', '╝': '+',
     '╠': '+', '╣': '+', '╦': '+', '╩': '+', '╬': '+',
     '═': '=', '║': '|',
+    # Smart quotes
+    '"': '"', '"': '"', '„': '"',
+    ''': "'", ''': "'", '‚': "'",
+    # Dashes
+    '—': '-', '–': '-', '‐': '-',
+    # Other common symbols
+    '…': '...', '•': '*', '‣': '*',
+    '°': 'o', '§': 'SS',
+    '±': '+/-', '×': 'x', '÷': '/',
+    '→': '->', '←': '<-', '↑': '^', '↓': 'v',
+    '™': '(TM)', '©': '(C)', '®': '(R)',
+    '€': 'EUR', '£': 'GBP', '¥': 'YEN', '¢': 'c',
 }
 
 
@@ -36,12 +49,13 @@ def convert_to_ascii(text: str) -> str:
         if ord(c) <= 127:
             # Already ASCII
             result.append(c)
-        elif c in _BOX_CHARS:
-            # Box-drawing character
-            result.append(_BOX_CHARS[c])
+        elif c in _UNICODE_MAP:
+            # Map unicode character to ASCII equivalent
+            result.append(_UNICODE_MAP[c])
         else:
-            # Remove non-ASCII characters not in mapping
-            pass  # Skip the character
+            # For unmapped non-ASCII, try to replace with closest ASCII
+            # or skip if no good replacement
+            pass
     return ''.join(result)
 
 
