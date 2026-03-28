@@ -267,12 +267,10 @@ class KeyBridgeDelegate(NSObject):
         alert.setInformativeText_(
             "📱 Send clipboard text via Bluetooth to KeyBridge dongle\n\n"
             "⌨️ Hotkey: Ctrl+Shift+V\n\n"
-            "🔐 Required Permissions:\n"
-            "• System Settings → Privacy & Security → Input Monitoring\n"
+            "🔐 Required Permission:\n"
+            "System Settings → Privacy & Security → Input Monitoring\n"
             "  ✓ Add KeyBridge to the list\n\n"
-            "• System Settings → Privacy & Security → Accessibility\n"
-            "  ✓ Enable KeyBridge\n\n"
-            "If the hotkey doesn't work, grant these permissions and restart the app."
+            "If the hotkey doesn't work, grant this permission and restart the app."
         )
         alert.addButtonWithTitle_("OK")
         alert.runModal()
