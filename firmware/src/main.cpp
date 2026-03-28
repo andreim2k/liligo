@@ -1183,12 +1183,33 @@ void loop()
         }
     }
 
-    // Restart after BLE session: wait for buffer to drain, then reboot for clean state
+    // Soft reset after BLE session: clear state and resume mouse mover (no reboot — preserves USB HID)
     if (pendingRestart && !deviceConnected && localQueueStart == localQueueEnd)
     {
-        Serial.println("Buffer drained after BLE session — restarting for clean state...");
-        delay(100);  // Let last USB HID reports flush
-        ESP.restart();
+        Serial.println("Buffer drained after BLE session — soft reset for clean state");
+
+        // Release any stuck HID keys
+        Keyboard.releaseAll();
+
+        // Clear the text queue
+        queueStart.store(0, std::memory_order_release);
+        queueEnd.store(0, std::memory_order_release);
+        peakQueueSize.store(0, std::memory_order_release);
+
+        // Reset flow control
+        lastReportedFree = 0;
+        lastCharTime = 0;
+        keyCount = 0;
+
+        // Clear restart flag and resume advertising
+        pendingRestart = false;
+        BLEDevice::startAdvertising();
+
+        // Ensure display refreshes to mouse mover
+        needsDisplayRefresh = true;
+        needsModeSwitch = true;
+
+        Serial.println("Soft reset complete — ready for next session");
     }
 
     // Mouse mover logic (only in mouse mode and no text queued)
