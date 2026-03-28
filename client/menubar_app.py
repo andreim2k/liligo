@@ -334,48 +334,42 @@ class KeyBridgeDelegate(NSObject):
             text = convert_to_ascii(text)
             encoded = text.encode('utf-8')
 
-            if len(encoded) > 60000:  # Flow control for large texts
-                buffer_free = asyncio.Event()
-                free_space = [0]
+            # Always use flow control — assume buffer fully free at connection start,
+            # track locally, update from firmware notifications.
+            FIRMWARE_BUFFER = 60000  # Conservative (actual 64KB), safe headroom
+            SEND_THRESHOLD = 4096   # Pause sending if fewer than 4KB free
 
-                def status_callback(sender, data):
-                    free_space[0] = int.from_bytes(data, 'little')
-                    buffer_free.set()
+            buffer_event = asyncio.Event()
+            buffer_event.set()  # Initially assume buffer is free
+            current_free = [FIRMWARE_BUFFER]
 
-                try:
-                    await client.start_notify(CHAR_STATUS_UUID, status_callback)
+            def status_callback(sender, data):
+                current_free[0] = int.from_bytes(data, 'little')
+                buffer_event.set()
 
-                    for i in range(0, len(encoded), chunk_size):
-                        chunk = encoded[i:i + chunk_size]
-
-                        # Check current buffer free space
-                        try:
-                            raw = await asyncio.wait_for(
-                                client.read_gatt_char(CHAR_STATUS_UUID),
-                                timeout=5.0
-                            )
-                            current_free = int.from_bytes(raw, 'little')
-                        except Exception as e:
-                            print(f"Warning: Could not read buffer status: {e}")
-                            current_free = 0
-
-                        # Wait if buffer getting full
-                        while current_free < 4096:
-                            buffer_free.clear()
-                            try:
-                                await asyncio.wait_for(buffer_free.wait(), timeout=30.0)
-                            except asyncio.TimeoutError:
-                                break
-                            current_free = free_space[0]
-
-                        await client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
-                finally:
-                    await client.stop_notify(CHAR_STATUS_UUID)
-            else:
-                # Small text: send directly (fast path)
+            await client.start_notify(CHAR_STATUS_UUID, status_callback)
+            try:
                 for i in range(0, len(encoded), chunk_size):
                     chunk = encoded[i:i + chunk_size]
-                    await client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
+
+                    # Wait if not enough free space
+                    while current_free[0] < SEND_THRESHOLD:
+                        buffer_event.clear()
+                        try:
+                            await asyncio.wait_for(buffer_event.wait(), timeout=60.0)
+                        except asyncio.TimeoutError:
+                            break  # Give up waiting, send anyway
+
+                    # Optimistically deduct chunk from local estimate
+                    current_free[0] = max(0, current_free[0] - len(chunk))
+
+                    # Send with timeout — prevents infinite hang if firmware stops responding
+                    await asyncio.wait_for(
+                        client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True),
+                        timeout=10.0
+                    )
+            finally:
+                await client.stop_notify(CHAR_STATUS_UUID)
 
             send_notification("KeyBridge", "Sent", f"{len(text)} chars")
 
