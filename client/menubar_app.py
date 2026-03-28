@@ -334,14 +334,23 @@ class KeyBridgeDelegate(NSObject):
             text = convert_to_ascii(text)
             encoded = text.encode('utf-8')
 
-            # Always use flow control — assume buffer fully free at connection start,
-            # track locally, update from firmware notifications.
-            FIRMWARE_BUFFER = 60000  # Conservative (actual 64KB), safe headroom
+            # Flow control: track firmware buffer free space via notifications
+            FIRMWARE_BUFFER = 65535  # Exact usable buffer (64KB - 1 circular sentinel)
             SEND_THRESHOLD = 4096   # Pause sending if fewer than 4KB free
 
             buffer_event = asyncio.Event()
-            buffer_event.set()  # Initially assume buffer is free
+            buffer_event.set()
             current_free = [FIRMWARE_BUFFER]
+
+            # Read actual buffer status from firmware (set on connect)
+            try:
+                raw = await asyncio.wait_for(
+                    client.read_gatt_char(CHAR_STATUS_UUID), timeout=3.0)
+                val = int.from_bytes(raw, 'little')
+                if val > 0:
+                    current_free[0] = val
+            except Exception:
+                pass  # Fall back to FIRMWARE_BUFFER default
 
             def status_callback(sender, data):
                 current_free[0] = int.from_bytes(data, 'little')
@@ -356,9 +365,19 @@ class KeyBridgeDelegate(NSObject):
                     while current_free[0] < SEND_THRESHOLD:
                         buffer_event.clear()
                         try:
-                            await asyncio.wait_for(buffer_event.wait(), timeout=60.0)
+                            await asyncio.wait_for(buffer_event.wait(), timeout=5.0)
                         except asyncio.TimeoutError:
-                            break  # Give up waiting, send anyway
+                            # No notification — read characteristic directly as fallback
+                            try:
+                                raw = await asyncio.wait_for(
+                                    client.read_gatt_char(CHAR_STATUS_UUID), timeout=3.0)
+                                current_free[0] = int.from_bytes(raw, 'little')
+                            except Exception:
+                                # Assume some space freed (firmware is consuming at ~500 chars/sec)
+                                current_free[0] = max(current_free[0], SEND_THRESHOLD)
+                            if current_free[0] < SEND_THRESHOLD:
+                                continue  # Still not enough space, wait again
+                            break
 
                     # Optimistically deduct chunk from local estimate
                     current_free[0] = max(0, current_free[0] - len(chunk))

@@ -230,50 +230,57 @@ class KeyBridgeClient:
             total_chunks = (len(encoded) + self.chunk_size - 1) // self.chunk_size
             print(f"Sending {len(encoded)} bytes in {total_chunks} chunks (chunk_size={self.chunk_size})...")
 
-            if len(encoded) > 60000:  # Flow control for large texts
-                print(f"Large text detected ({len(encoded)} bytes), using flow control...")
-                buffer_free = asyncio.Event()
-                free_space = [0]
+            # Flow control: track firmware buffer free space via notifications
+            FIRMWARE_BUFFER = 65535  # Exact usable buffer (64KB - 1)
+            SEND_THRESHOLD = 4096   # Pause sending if fewer than 4KB free
 
-                def status_callback(sender, data):
-                    free_space[0] = int.from_bytes(data, 'little')
-                    buffer_free.set()
+            buffer_event = asyncio.Event()
+            buffer_event.set()
+            current_free = [FIRMWARE_BUFFER]
 
-                try:
-                    await self.client.start_notify(CHAR_STATUS_UUID, status_callback)
+            # Read actual buffer status from firmware
+            try:
+                raw = await asyncio.wait_for(
+                    self.client.read_gatt_char(CHAR_STATUS_UUID), timeout=3.0)
+                val = int.from_bytes(raw, 'little')
+                if val > 0:
+                    current_free[0] = val
+            except Exception:
+                pass
 
-                    for i in range(0, len(encoded), self.chunk_size):
-                        chunk = encoded[i:i + self.chunk_size]
+            def status_callback(sender, data):
+                current_free[0] = int.from_bytes(data, 'little')
+                buffer_event.set()
 
-                        # Check current buffer free space
-                        try:
-                            raw = await asyncio.wait_for(
-                                self.client.read_gatt_char(CHAR_STATUS_UUID),
-                                timeout=5.0
-                            )
-                            current_free = int.from_bytes(raw, 'little')
-                        except Exception as e:
-                            print(f"Warning: Could not read buffer status: {e}")
-                            current_free = 0
-
-                        # Wait if buffer getting full
-                        while current_free < 4096:
-                            buffer_free.clear()
-                            try:
-                                await asyncio.wait_for(buffer_free.wait(), timeout=30.0)
-                            except asyncio.TimeoutError:
-                                print("Warning: Buffer full timeout, resuming anyway")
-                                break
-                            current_free = free_space[0]
-
-                        await self.client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
-                finally:
-                    await self.client.stop_notify(CHAR_STATUS_UUID)
-            else:
-                # Small text: send directly (fast path)
+            await self.client.start_notify(CHAR_STATUS_UUID, status_callback)
+            try:
                 for i in range(0, len(encoded), self.chunk_size):
                     chunk = encoded[i:i + self.chunk_size]
-                    await self.client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
+
+                    # Wait if not enough free space
+                    while current_free[0] < SEND_THRESHOLD:
+                        buffer_event.clear()
+                        try:
+                            await asyncio.wait_for(buffer_event.wait(), timeout=5.0)
+                        except asyncio.TimeoutError:
+                            try:
+                                raw = await asyncio.wait_for(
+                                    self.client.read_gatt_char(CHAR_STATUS_UUID), timeout=3.0)
+                                current_free[0] = int.from_bytes(raw, 'little')
+                            except Exception:
+                                current_free[0] = max(current_free[0], SEND_THRESHOLD)
+                            if current_free[0] < SEND_THRESHOLD:
+                                continue
+                            break
+
+                    current_free[0] = max(0, current_free[0] - len(chunk))
+
+                    await asyncio.wait_for(
+                        self.client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True),
+                        timeout=10.0
+                    )
+            finally:
+                await self.client.stop_notify(CHAR_STATUS_UUID)
 
         print(f"Sent {len(text)} characters ({len(encoded)} bytes)")
 

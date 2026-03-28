@@ -141,6 +141,7 @@ char textQueueBuffer[MAX_QUEUE_SIZE];
 std::atomic<size_t> queueStart(0);  // ATOMIC: accessed by both BLE callback and main loop
 std::atomic<size_t> queueEnd(0);    // ATOMIC: prevents data races with acquire/release semantics
 std::atomic<size_t> peakQueueSize(0);  // Track max queue size for progress bar
+size_t lastReportedFree = 0;  // Flow control: last reported free space (global for reset on connect)
 unsigned long lastCharTime = 0;
 const unsigned long CHAR_INTERVAL = 2; // 2ms between chars - 500 chars/sec
 
@@ -373,6 +374,19 @@ class ServerCallbacks : public BLEServerCallbacks
 
         setLed(0, 50, 0); // Green
         Serial.println("BLE connected - switching to KeyBridge mode");
+
+        // Reset flow control state for new connection
+        lastReportedFree = 0;
+
+        // Set initial buffer status so client can read it immediately
+        if (pStatusCharacteristic)
+        {
+            size_t qs = queueStart.load(std::memory_order_acquire);
+            size_t qe = queueEnd.load(std::memory_order_acquire);
+            size_t sz = (qe >= qs) ? (qe - qs) : (MAX_QUEUE_SIZE - qs + qe);
+            uint32_t freeBytes = (uint32_t)(MAX_QUEUE_SIZE - 1 - sz);
+            pStatusCharacteristic->setValue((uint8_t *)&freeBytes, 4);
+        }
     }
 
     void onDisconnect(BLEServer *pServer) override
@@ -389,6 +403,9 @@ class ServerCallbacks : public BLEServerCallbacks
 
         setLed(0, 50, 0); // Green (mouse mover ready)
         Serial.println("BLE disconnected - switching to Mouse Mover mode");
+
+        // Reset flow control for next connection
+        lastReportedFree = 0;
     }
 };
 
@@ -1135,15 +1152,23 @@ void loop()
         keyCount++;
         lastCharTime = currentTime;
 
-        // Notify client of buffer status when space frees up
-        static size_t lastReportedFree = MAX_QUEUE_SIZE;
+        // Re-read queueStart after advancing (localQueueStart is now stale)
+        localQueueStart = queueStart.load(std::memory_order_acquire);
+    }
+
+    // Flow control: notify client of buffer free space
+    // Runs EVERY loop iteration (not just during typing) so client gets timely updates
+    // Rate-limited: only fires when 4KB+ freed or buffer fully drained
+    if (deviceConnected && pStatusCharacteristic)
+    {
         size_t currentQueueSize = (localQueueEnd >= localQueueStart)
             ? (localQueueEnd - localQueueStart)
             : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
         size_t currentFree = MAX_QUEUE_SIZE - 1 - currentQueueSize;
-        if (deviceConnected && pStatusCharacteristic && (currentFree >= lastReportedFree + 4096 || currentQueueSize == 0)) {
+        if (currentFree >= lastReportedFree + 4096 || currentQueueSize == 0)
+        {
             uint32_t freeBytes = (uint32_t)currentFree;
-            pStatusCharacteristic->setValue((uint8_t*)&freeBytes, 4);
+            pStatusCharacteristic->setValue((uint8_t *)&freeBytes, 4);
             pStatusCharacteristic->notify();
             lastReportedFree = currentFree;
         }
