@@ -143,7 +143,7 @@ std::atomic<size_t> queueEnd(0);    // ATOMIC: prevents data races with acquire/
 std::atomic<size_t> peakQueueSize(0);  // Track max queue size for progress bar
 size_t lastReportedFree = 0;  // Flow control: last reported free space (global for reset on connect)
 unsigned long lastCharTime = 0;
-const unsigned long CHAR_INTERVAL = 2; // 2ms between chars - 500 chars/sec
+const unsigned long CHAR_INTERVAL = 5; // 5ms between chars - 200 chars/sec
 
 // HID modifier bits
 #define MOD_LCTRL 0x01
