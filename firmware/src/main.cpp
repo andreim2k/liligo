@@ -142,6 +142,7 @@ std::atomic<size_t> queueStart(0);  // ATOMIC: accessed by both BLE callback and
 std::atomic<size_t> queueEnd(0);    // ATOMIC: prevents data races with acquire/release semantics
 std::atomic<size_t> peakQueueSize(0);  // Track max queue size for progress bar
 size_t lastReportedFree = 0;  // Flow control: last reported free space (global for reset on connect)
+bool pendingRestart = false;  // Restart ESP32 after buffer drains post-disconnect
 unsigned long lastCharTime = 0;
 const unsigned long CHAR_INTERVAL = 5; // 5ms between chars - 200 chars/sec
 
@@ -356,6 +357,7 @@ class ServerCallbacks : public BLEServerCallbacks
     {
         deviceConnected = true;
         reconnectAttempts = 0;  // Reset backoff on successful connection
+        pendingRestart = false;  // Clear restart flag in case connection arrives before restart
 
         // Store remaining countdown time before switching modes
         unsigned long elapsed = getElapsedTime(lastMoveTime, millis());
@@ -406,6 +408,9 @@ class ServerCallbacks : public BLEServerCallbacks
 
         // Reset flow control for next connection
         lastReportedFree = 0;
+
+        // Mark that we should restart after buffer drains (prevent reconnects while draining)
+        pendingRestart = true;
     }
 };
 
@@ -1116,17 +1121,21 @@ void loop()
     // Handle BLE reconnection with exponential backoff
     if (!deviceConnected && oldDeviceConnected)
     {
-        // Calculate exponential backoff: 500ms, 1s, 2s, 4s, ..., capped at 10s
-        unsigned long backoffMs = 500UL * (1UL << reconnectAttempts);  // 500ms * 2^attempts
-        if (backoffMs > 10000)
-            backoffMs = 10000;  // Cap at 10 seconds
-
-        if (currentTime >= lastReconnectTime + backoffMs)
+        // Don't advertise if we're about to restart — prevent reconnects while buffer drains
+        if (!pendingRestart)
         {
-            Serial.printf("BLE reconnect attempt %u (backoff: %lums)\n", reconnectAttempts, backoffMs);
-            BLEDevice::startAdvertising();
-            reconnectAttempts++;
-            lastReconnectTime = currentTime;
+            // Calculate exponential backoff: 500ms, 1s, 2s, 4s, ..., capped at 10s
+            unsigned long backoffMs = 500UL * (1UL << reconnectAttempts);  // 500ms * 2^attempts
+            if (backoffMs > 10000)
+                backoffMs = 10000;  // Cap at 10 seconds
+
+            if (currentTime >= lastReconnectTime + backoffMs)
+            {
+                Serial.printf("BLE reconnect attempt %u (backoff: %lums)\n", reconnectAttempts, backoffMs);
+                BLEDevice::startAdvertising();
+                reconnectAttempts++;
+                lastReconnectTime = currentTime;
+            }
         }
 
         oldDeviceConnected = deviceConnected;
@@ -1172,6 +1181,14 @@ void loop()
             pStatusCharacteristic->notify();
             lastReportedFree = currentFree;
         }
+    }
+
+    // Restart after BLE session: wait for buffer to drain, then reboot for clean state
+    if (pendingRestart && !deviceConnected && localQueueStart == localQueueEnd)
+    {
+        Serial.println("Buffer drained after BLE session — restarting for clean state...");
+        delay(100);  // Let last USB HID reports flush
+        ESP.restart();
     }
 
     // Mouse mover logic (only in mouse mode and no text queued)
