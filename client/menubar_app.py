@@ -139,7 +139,7 @@ class KeyBridgeDelegate(NSObject):
         self.click_timer = None
         self.listener = None
         self.ctrl_pressed = False
-        self.shift_pressed = False
+        self.cmd_pressed = False
 
         return self
 
@@ -189,29 +189,29 @@ class KeyBridgeDelegate(NSObject):
         self._setup_listener()
 
     def _setup_listener(self):
-        """Setup pynput keyboard listener for global hotkey (Ctrl+Shift+V)."""
-        print("[HOTKEY] Setting up Ctrl+Shift+V listener...")
+        """Setup pynput keyboard listener for global hotkey (Ctrl+Cmd+V)."""
+        print("[HOTKEY] Setting up Ctrl+Cmd+V listener...")
 
         def on_press(key):
             try:
                 # Handle Ctrl key
                 if key == keyboard.Key.ctrl or key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
                     self.ctrl_pressed = True
-                # Handle Shift key
-                elif key == keyboard.Key.shift or key == keyboard.Key.shift_l or key == keyboard.Key.shift_r:
-                    self.shift_pressed = True
+                # Handle Cmd key
+                elif key == keyboard.Key.cmd or key == keyboard.Key.cmd_l or key == keyboard.Key.cmd_r:
+                    self.cmd_pressed = True
                 # Handle V key (as character or Key enum)
                 elif hasattr(key, 'char') and key.char == 'v':
-                    if self.ctrl_pressed and self.shift_pressed:
-                        print("[HOTKEY] Ctrl+Shift+V triggered!")
+                    if self.ctrl_pressed and self.cmd_pressed:
+                        print("[HOTKEY] Ctrl+Cmd+V triggered!")
                         self.performSelectorOnMainThread_withObject_waitUntilDone_(
                             objc.selector(self.sendClipboard_, signature=b'v@:@'),
                             None,
                             False
                         )
                 elif key == keyboard.Key.v:
-                    if self.ctrl_pressed and self.shift_pressed:
-                        print("[HOTKEY] Ctrl+Shift+V triggered!")
+                    if self.ctrl_pressed and self.cmd_pressed:
+                        print("[HOTKEY] Ctrl+Cmd+V triggered!")
                         self.performSelectorOnMainThread_withObject_waitUntilDone_(
                             objc.selector(self.sendClipboard_, signature=b'v@:@'),
                             None,
@@ -222,17 +222,17 @@ class KeyBridgeDelegate(NSObject):
 
         def on_release(key):
             try:
-                if key == keyboard.Key.ctrl:
+                if key == keyboard.Key.ctrl or key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
                     self.ctrl_pressed = False
-                elif key == keyboard.Key.shift:
-                    self.shift_pressed = False
+                elif key == keyboard.Key.cmd or key == keyboard.Key.cmd_l or key == keyboard.Key.cmd_r:
+                    self.cmd_pressed = False
             except AttributeError:
                 pass
 
         try:
             self.listener = keyboard.Listener(on_press=on_press, on_release=on_release)
             self.listener.start()
-            print("[HOTKEY] Listener active: Press Ctrl+Shift+V")
+            print("[HOTKEY] Listener active: Press Ctrl+Cmd+V")
         except Exception as e:
             error_msg = str(e)
             print(f"[HOTKEY] Failed to start listener: {error_msg}")
@@ -280,7 +280,7 @@ class KeyBridgeDelegate(NSObject):
         alert.setMessageText_("KeyBridge - Bluetooth Keyboard Bridge")
         alert.setInformativeText_(
             "📱 Send clipboard text via Bluetooth to KeyBridge dongle\n\n"
-            "⌨️ Hotkey: Ctrl+Shift+V\n\n"
+            "⌨️ Hotkey: Ctrl+Cmd+V\n\n"
             "🔐 Required Permission:\n"
             "System Settings → Privacy & Security → Input Monitoring\n"
             "  ✓ Add KeyBridge to the list\n\n"
