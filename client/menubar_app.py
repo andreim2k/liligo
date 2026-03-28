@@ -68,6 +68,7 @@ from Quartz import (
 # BLE UUIDs (must match firmware)
 SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 CHAR_TEXT_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+CHAR_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa"
 
 DEVICE_NAME = "KeyBridge"
 
@@ -340,21 +341,55 @@ class KeyBridgeDelegate(NSObject):
 
             # Calculate chunk size
             mtu = client.mtu_size
-            chunk_size = min(mtu - 3, 500)
+            chunk_size = mtu - 3
 
             # Send text
             self._set_title("⌨️📤")
             text = convert_box_chars(text)
             encoded = text.encode('utf-8')
-            for i in range(0, len(encoded), chunk_size):
-                chunk = encoded[i:i + chunk_size]
-                await client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
 
-                # Add delay between chunks for large pastes to prevent buffer overflow
-                if len(encoded) > 1000:
-                    await asyncio.sleep(0.005)  # 5ms delay for large pastes
-                elif len(encoded) > 500:
-                    await asyncio.sleep(0.002)  # 2ms delay for medium pastes
+            if len(encoded) > 60000:  # Flow control for large texts
+                buffer_free = asyncio.Event()
+                free_space = [0]
+
+                def status_callback(sender, data):
+                    free_space[0] = int.from_bytes(data, 'little')
+                    buffer_free.set()
+
+                try:
+                    await client.start_notify(CHAR_STATUS_UUID, status_callback)
+
+                    for i in range(0, len(encoded), chunk_size):
+                        chunk = encoded[i:i + chunk_size]
+
+                        # Check current buffer free space
+                        try:
+                            raw = await asyncio.wait_for(
+                                client.read_gatt_char(CHAR_STATUS_UUID),
+                                timeout=5.0
+                            )
+                            current_free = int.from_bytes(raw, 'little')
+                        except Exception as e:
+                            print(f"Warning: Could not read buffer status: {e}")
+                            current_free = 0
+
+                        # Wait if buffer getting full
+                        while current_free < 4096:
+                            buffer_free.clear()
+                            try:
+                                await asyncio.wait_for(buffer_free.wait(), timeout=30.0)
+                            except asyncio.TimeoutError:
+                                break
+                            current_free = free_space[0]
+
+                        await client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
+                finally:
+                    await client.stop_notify(CHAR_STATUS_UUID)
+            else:
+                # Small text: send directly (fast path)
+                for i in range(0, len(encoded), chunk_size):
+                    chunk = encoded[i:i + chunk_size]
+                    await client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
 
             send_notification("KeyBridge", "Sent", f"{len(text)} chars")
 

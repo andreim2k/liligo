@@ -112,6 +112,7 @@ unsigned long pausedTimeRemaining = 0; // Store remaining time when BLE connects
 #define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHAR_TEXT_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define CHAR_HID_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+#define CHAR_STATUS_UUID "beb5483e-36e1-4688-b7f5-ea07361b26aa"
 
 // SECURITY NOTE: This firmware intentionally provides no authentication or encryption.
 // BLE pairing is disabled to maximize ease of use. Anyone within Bluetooth range can
@@ -123,6 +124,7 @@ unsigned long pausedTimeRemaining = 0; // Store remaining time when BLE connects
 BLEServer *pServer = nullptr;
 BLECharacteristic *pTextCharacteristic = nullptr;
 BLECharacteristic *pHidCharacteristic = nullptr;
+BLECharacteristic *pStatusCharacteristic = nullptr;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 unsigned int reconnectAttempts = 0;
@@ -133,14 +135,14 @@ uint32_t keyCount = 0;
 
 // Text queue for async processing (prevents BLE callback blocking)
 // Use circular buffer instead of String to avoid heap fragmentation
-const size_t MAX_QUEUE_SIZE = 65536; // 64KB buffer - with flow control, supports unlimited pastes
+const size_t MAX_QUEUE_SIZE = 65536; // 64KB buffer - at 2ms/char, holds ~131 seconds of typing
 // Memory budget: ~12.5% of ESP32-S3's 512KB internal SRAM (leaves ~448KB for heap/code)
 char textQueueBuffer[MAX_QUEUE_SIZE];
 std::atomic<size_t> queueStart(0);  // ATOMIC: accessed by both BLE callback and main loop
 std::atomic<size_t> queueEnd(0);    // ATOMIC: prevents data races with acquire/release semantics
 std::atomic<size_t> peakQueueSize(0);  // Track max queue size for progress bar
 unsigned long lastCharTime = 0;
-const unsigned long CHAR_INTERVAL = 10; // 10ms between chars - slower but more stable for large pastes
+const unsigned long CHAR_INTERVAL = 2; // 2ms between chars - 500 chars/sec, safe for modern USB HID
 
 // HID modifier bits
 #define MOD_LCTRL 0x01
@@ -446,10 +448,8 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
                 else
                 {
                     // Buffer full - can't add more
-                    if (chars_added == 0)
-                    {
-                        Serial.printf("WARNING: Queue full, couldn't queue text\n");
-                    }
+                    Serial.printf("WARNING: Queue full, dropped %d bytes (total %d chars added this write)\n",
+                                  (int)(value.length() - i), (int)chars_added);
                     break;
                 }
             }
@@ -1065,6 +1065,11 @@ void setup()
     static HidCharCallbacks hidCharCallbacks;
     pHidCharacteristic->setCallbacks(&hidCharCallbacks);
 
+    pStatusCharacteristic = pService->createCharacteristic(
+        CHAR_STATUS_UUID,
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    pStatusCharacteristic->addDescriptor(new BLE2902());
+
     pService->start();
 
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -1129,7 +1134,19 @@ void loop()
         Keyboard.write(c);  // write() handles shift mapping automatically
         keyCount++;
         lastCharTime = currentTime;
-        // No display update for BLE mode - LED only
+
+        // Notify client of buffer status when space frees up
+        static size_t lastReportedFree = MAX_QUEUE_SIZE;
+        size_t currentQueueSize = (localQueueEnd >= localQueueStart)
+            ? (localQueueEnd - localQueueStart)
+            : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
+        size_t currentFree = MAX_QUEUE_SIZE - 1 - currentQueueSize;
+        if (deviceConnected && pStatusCharacteristic && (currentFree >= lastReportedFree + 4096 || currentQueueSize == 0)) {
+            uint32_t freeBytes = (uint32_t)currentFree;
+            pStatusCharacteristic->setValue((uint8_t*)&freeBytes, 4);
+            pStatusCharacteristic->notify();
+            lastReportedFree = currentFree;
+        }
     }
 
     // Mouse mover logic (only in mouse mode and no text queued)

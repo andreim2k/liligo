@@ -87,6 +87,7 @@ def read_text_file(file_path: str) -> Optional[str]:
 SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 CHAR_TEXT_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 CHAR_HID_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+CHAR_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa"
 
 DEVICE_NAME = "KeyBridge"
 
@@ -173,7 +174,7 @@ class KeyBridgeClient:
             await self.client.connect()
             # Get the negotiated MTU (bleak auto-negotiates max MTU)
             mtu = self.client.mtu_size
-            self.chunk_size = min(mtu - 3, 500)  # MTU - 3 for ATT header, max 500
+            self.chunk_size = mtu - 3  # MTU - 3 for ATT header
             print(f"Connected to {device.name} (MTU: {mtu}, chunk: {self.chunk_size})")
             return True
         except Exception as e:
@@ -217,16 +218,51 @@ class KeyBridgeClient:
             # Send in chunks with acknowledgment for reliability
             total_chunks = (len(encoded) + self.chunk_size - 1) // self.chunk_size
             print(f"Sending {len(encoded)} bytes in {total_chunks} chunks (chunk_size={self.chunk_size})...")
-            for i in range(0, len(encoded), self.chunk_size):
-                chunk = encoded[i:i + self.chunk_size]
-                await self.client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
 
-                # Add delay between chunks for large pastes to prevent buffer overflow
-                # Device processes at ~1KB/s, so small delays help
-                if len(encoded) > 1000:
-                    await asyncio.sleep(0.005)  # 5ms delay for large pastes
-                elif len(encoded) > 500:
-                    await asyncio.sleep(0.002)  # 2ms delay for medium pastes
+            if len(encoded) > 60000:  # Flow control for large texts
+                print(f"Large text detected ({len(encoded)} bytes), using flow control...")
+                buffer_free = asyncio.Event()
+                free_space = [0]
+
+                def status_callback(sender, data):
+                    free_space[0] = int.from_bytes(data, 'little')
+                    buffer_free.set()
+
+                try:
+                    await self.client.start_notify(CHAR_STATUS_UUID, status_callback)
+
+                    for i in range(0, len(encoded), self.chunk_size):
+                        chunk = encoded[i:i + self.chunk_size]
+
+                        # Check current buffer free space
+                        try:
+                            raw = await asyncio.wait_for(
+                                self.client.read_gatt_char(CHAR_STATUS_UUID),
+                                timeout=5.0
+                            )
+                            current_free = int.from_bytes(raw, 'little')
+                        except Exception as e:
+                            print(f"Warning: Could not read buffer status: {e}")
+                            current_free = 0
+
+                        # Wait if buffer getting full
+                        while current_free < 4096:
+                            buffer_free.clear()
+                            try:
+                                await asyncio.wait_for(buffer_free.wait(), timeout=30.0)
+                            except asyncio.TimeoutError:
+                                print("Warning: Buffer full timeout, resuming anyway")
+                                break
+                            current_free = free_space[0]
+
+                        await self.client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
+                finally:
+                    await self.client.stop_notify(CHAR_STATUS_UUID)
+            else:
+                # Small text: send directly (fast path)
+                for i in range(0, len(encoded), self.chunk_size):
+                    chunk = encoded[i:i + self.chunk_size]
+                    await self.client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True)
 
         print(f"Sent {len(text)} characters ({len(encoded)} bytes)")
 
