@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 from typing import Optional
 
 from bleak import BleakClient, BleakScanner, BleakError
@@ -28,17 +29,60 @@ _UNICODE_MAP = {
     '╠': '+', '╣': '+', '╦': '+', '╩': '+', '╬': '+',
     '═': '=', '║': '|',
     # Smart quotes
-    '"': '"', '"': '"', '„': '"',
-    ''': "'", ''': "'", '‚': "'",
-    # Dashes
-    '—': '-', '–': '-', '‐': '-',
-    # Other common symbols
-    '…': '...', '•': '*', '‣': '*',
-    '°': 'o', '§': 'SS',
-    '±': '+/-', '×': 'x', '÷': '/',
-    '→': '->', '←': '<-', '↑': '^', '↓': 'v',
-    '™': '(TM)', '©': '(C)', '®': '(R)',
-    '€': 'EUR', '£': 'GBP', '¥': 'YEN', '¢': 'c',
+    '\u201c': '"', '\u201d': '"', '\u201e': '"',
+    '\u2018': "'", '\u2019': "'", '\u201a': "'",
+    '\u00ab': '"', '\u00bb': '"',
+    # Dashes and hyphens
+    '\u2014': '-', '\u2013': '-', '\u2010': '-', '\u2011': '-', '\u2012': '-',
+    '\u2015': '-', '\ufe58': '-', '\ufe63': '-', '\uff0d': '-',
+    # Spaces (non-breaking, em-space, en-space, thin, etc.)
+    '\u00a0': ' ', '\u2002': ' ', '\u2003': ' ', '\u2004': ' ', '\u2005': ' ',
+    '\u2006': ' ', '\u2007': ' ', '\u2008': ' ', '\u2009': ' ', '\u200a': ' ',
+    '\u202f': ' ', '\u205f': ' ',
+    # Zero-width characters (drop them)
+    '\u200b': '', '\u200c': '', '\u200d': '', '\ufeff': '', '\u200e': '', '\u200f': '',
+    # Common symbols
+    '\u2026': '...', '\u2022': '*', '\u2023': '*', '\u25cf': '*', '\u25cb': 'o',
+    '\u25a0': '#', '\u25a1': '[]', '\u25aa': '*', '\u25ab': '*',
+    '\u00b0': 'o', '\u00a7': 'SS', '\u00b6': 'P',
+    '\u00b1': '+/-', '\u00d7': 'x', '\u00f7': '/',
+    '\u2264': '<=', '\u2265': '>=', '\u2260': '!=', '\u2248': '~=',
+    '\u221e': 'inf', '\u221a': 'sqrt',
+    # Arrows
+    '\u2192': '->', '\u2190': '<-', '\u2191': '^', '\u2193': 'v',
+    '\u21d2': '=>', '\u21d0': '<=', '\u21d4': '<=>',
+    '\u2794': '->', '\u279c': '->', '\u27a1': '->',
+    # Legal/trademark
+    '\u2122': '(TM)', '\u00a9': '(C)', '\u00ae': '(R)',
+    # Currency
+    '\u20ac': 'EUR', '\u00a3': 'GBP', '\u00a5': 'YEN', '\u00a2': 'c',
+    '\u20b9': 'INR', '\u20bd': 'RUB', '\u20a9': 'KRW',
+    # Fractions
+    '\u00bc': '1/4', '\u00bd': '1/2', '\u00be': '3/4',
+    '\u2153': '1/3', '\u2154': '2/3',
+    # Superscripts / subscripts
+    '\u00b2': '2', '\u00b3': '3', '\u00b9': '1',
+    '\u2070': '0', '\u2074': '4', '\u2075': '5', '\u2076': '6',
+    '\u2077': '7', '\u2078': '8', '\u2079': '9',
+    # Misc punctuation and symbols
+    '\u2018': "'", '\u2019': "'",
+    '\u00bf': '?', '\u00a1': '!',
+    '\u2116': 'No.', '\u2030': '0/00', '\u2031': '0/000',
+    '\u00b7': '.', '\u2027': '.', '\u30fb': '.',
+    # Checkmarks, crosses, media symbols
+    '\u2713': '[v]', '\u2714': '[v]', '\u2715': '[x]', '\u2716': '[x]',
+    '\u2717': '[x]', '\u2718': '[x]',
+    '\u23fa': '(o)', '\u23f8': '||', '\u23f9': '[]', '\u23ef': '|>',
+    '\u25b6': '>', '\u25c0': '<', '\u23f5': '>', '\u23f4': '<',
+    '\u2b50': '*', '\u2605': '*', '\u2606': '*',
+    '\u2764': '<3', '\u2665': '<3',
+    # Musical notes
+    '\u266a': '#', '\u266b': '##', '\u266c': '##', '\u266d': 'b', '\u266e': 'h', '\u266f': '#',
+    # Accented vowels (common ones not handled by unicodedata NFKD)
+    '\u00e6': 'ae', '\u00c6': 'AE', '\u0153': 'oe', '\u0152': 'OE',
+    '\u00f8': 'o', '\u00d8': 'O', '\u00df': 'ss', '\u0131': 'i',
+    '\u0110': 'D', '\u0111': 'd', '\u0141': 'L', '\u0142': 'l',
+    '\u017d': 'Z', '\u017e': 'z',
 }
 
 
@@ -47,15 +91,18 @@ def convert_to_ascii(text: str) -> str:
     result = []
     for c in text:
         if ord(c) <= 127:
-            # Already ASCII
             result.append(c)
         elif c in _UNICODE_MAP:
-            # Map unicode character to ASCII equivalent
             result.append(_UNICODE_MAP[c])
         else:
-            # For unmapped non-ASCII, try to replace with closest ASCII
-            # or skip if no good replacement
-            pass
+            # Fallback: use Unicode decomposition to strip accents (e.g. e with accent -> e)
+            nfkd = unicodedata.normalize('NFKD', c)
+            ascii_chars = ''.join(ch for ch in nfkd if ord(ch) <= 127)
+            if ascii_chars:
+                result.append(ascii_chars)
+            else:
+                # Last resort: replace with ? so nothing is silently lost
+                result.append('?')
     return ''.join(result)
 
 
