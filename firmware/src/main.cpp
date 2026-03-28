@@ -142,7 +142,7 @@ std::atomic<size_t> queueStart(0);  // ATOMIC: accessed by both BLE callback and
 std::atomic<size_t> queueEnd(0);    // ATOMIC: prevents data races with acquire/release semantics
 std::atomic<size_t> peakQueueSize(0);  // Track max queue size for progress bar
 unsigned long lastCharTime = 0;
-const unsigned long CHAR_INTERVAL = 1; // 1ms between chars - 1000 chars/sec, maximum speed
+const unsigned long CHAR_INTERVAL = 2; // 2ms between chars - 500 chars/sec
 
 // HID modifier bits
 #define MOD_LCTRL 0x01
