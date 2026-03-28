@@ -6,7 +6,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=['pynput'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -49,5 +49,6 @@ app = BUNDLE(
     bundle_identifier=None,
     info_plist={
         'NSBluetoothAlwaysUsageDescription': 'KeyBridge needs Bluetooth to send keystrokes to the USB dongle.',
+        'NSInputMonitoringUsageDescription': 'KeyBridge needs keyboard monitoring for the Ctrl+Shift+V hotkey.',
     },
 )

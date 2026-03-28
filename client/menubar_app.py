@@ -56,30 +56,7 @@ from AppKit import (
     NSImage,
 )
 from PyObjCTools import AppHelper
-from Quartz import (
-    CGEventGetIntegerValueField,
-    kCGKeyboardEventKeycode,
-    CGEventTapCreate,
-    CGEventGetFlags,
-    CGEventSourceKeyState,
-    kCGEventSourceStateHIDSystemState,
-    kCGSessionEventTap,
-    kCGHeadInsertEventTap,
-    kCGEventTapOptionDefault,
-    CGEventMaskBit,
-    kCGEventKeyDown,
-    kCGEventFlagsChanged,
-    CGEventTapEnable,
-    CFMachPortCreateRunLoopSource,
-    CFRunLoopGetCurrent,
-    CFRunLoopAddSource,
-    CFRunLoopRemoveSource,
-    kCFRunLoopCommonModes,
-    kCGEventFlagMaskCommand,
-    kCGEventFlagMaskSecondaryFn,
-    kCGEventFlagMaskControl,
-    kCGEventFlagMaskShift,
-)
+from pynput import keyboard
 
 # BLE UUIDs (must match firmware)
 SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
@@ -88,69 +65,15 @@ CHAR_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa"
 
 DEVICE_NAME = "KeyBridge"
 
-# Global delegate reference for signal handlers
+# Global delegate reference
 _delegate = None
-
-
-def _create_event_tap_callback(delegate):
-    """Create a C-level event tap callback that properly captures the delegate."""
-    def callback(proxy, event_type, event, refcon):
-        try:
-            # Only process keydown events
-            if event_type != kCGEventKeyDown:
-                return event
-
-            flags = CGEventGetFlags(event)
-            keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
-
-            # Check for Ctrl+Shift+V (keycode 9 = V key)
-            has_ctrl = (flags & kCGEventFlagMaskControl) != 0
-            has_shift = (flags & kCGEventFlagMaskShift) != 0
-
-            if keycode == 9 and has_ctrl and has_shift:
-                print("[HOTKEY] Ctrl+Shift+V triggered!")
-                # Schedule on main thread
-                delegate.performSelectorOnMainThread_withObject_waitUntilDone_(
-                    objc.selector(delegate.sendClipboard_, signature=b'v@:@'),
-                    None,
-                    False
-                )
-                # Consume event (don't pass through)
-                return None
-
-            # Pass through all other events
-            return event
-
-        except Exception as e:
-            print(f"[HOTKEY] Error in callback: {e}")
-            return event
-
-    return callback
-
-
-def cleanup_event_tap():
-    """Safely cleanup event tap if delegate exists."""
-    global _delegate
-    if _delegate:
-        try:
-            if _delegate.event_tap:
-                CGEventTapEnable(_delegate.event_tap, False)
-                print("[CLEANUP] Event tap disabled")
-            if _delegate.run_loop_source:
-                CFRunLoopRemoveSource(
-                    CFRunLoopGetCurrent(),
-                    _delegate.run_loop_source,
-                    kCFRunLoopCommonModes
-                )
-                print("[CLEANUP] Run loop source removed")
-        except Exception as e:
-            print(f"[CLEANUP] Error: {e}")
 
 
 def signal_handler(signum, frame):
     """Handle signals and cleanup before exit."""
     print(f"[SIGNAL] Received signal {signum}, cleaning up...")
-    cleanup_event_tap()
+    if _delegate and _delegate.listener:
+        _delegate.listener.stop()
     sys.exit(0)
 
 
@@ -200,9 +123,9 @@ class KeyBridgeDelegate(NSObject):
         self.last_click_time = 0
         self.double_click_threshold = 0.4
         self.click_timer = None
-        self.event_tap = None
-        self.run_loop_source = None
-        self.event_tap_callback = None
+        self.listener = None
+        self.ctrl_pressed = False
+        self.shift_pressed = False
 
         return self
 
@@ -241,45 +164,48 @@ class KeyBridgeDelegate(NSObject):
         self._start_ble_thread()
 
         # Setup global hotkey
-        self._setup_event_tap()
+        self._setup_listener()
 
-    def _setup_event_tap(self):
-        """Setup CGEventTap for global hotkey (Ctrl+Shift+V)."""
-        print("[HOTKEY] Setting up Ctrl+Shift+V event tap...")
+        # Notify that app started
+        send_notification("KeyBridge", "Ready", "Press Ctrl+Shift+V to send clipboard")
 
-        # Create the event tap — listen to key down events
-        event_mask = CGEventMaskBit(kCGEventKeyDown)
+    def _setup_listener(self):
+        """Setup pynput keyboard listener for global hotkey (Ctrl+Shift+V)."""
+        print("[HOTKEY] Setting up Ctrl+Shift+V listener...")
 
-        # Create callback with proper closure over delegate
-        # Store it to prevent garbage collection
-        self.event_tap_callback = _create_event_tap_callback(self)
+        def on_press(key):
+            try:
+                if key == keyboard.Key.ctrl:
+                    self.ctrl_pressed = True
+                elif key == keyboard.Key.shift:
+                    self.shift_pressed = True
+                elif key == keyboard.Key.v:
+                    if self.ctrl_pressed and self.shift_pressed:
+                        print("[HOTKEY] Ctrl+Shift+V triggered!")
+                        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                            objc.selector(self.sendClipboard_, signature=b'v@:@'),
+                            None,
+                            False
+                        )
+            except AttributeError:
+                pass
 
-        self.event_tap = CGEventTapCreate(
-            kCGSessionEventTap,           # Session level
-            kCGHeadInsertEventTap,        # Insert at head
-            kCGEventTapOptionDefault,     # Default options
-            event_mask,                   # Key down events only
-            self.event_tap_callback,      # Callback function
-            None                          # User data
-        )
+        def on_release(key):
+            try:
+                if key == keyboard.Key.ctrl:
+                    self.ctrl_pressed = False
+                elif key == keyboard.Key.shift:
+                    self.shift_pressed = False
+            except AttributeError:
+                pass
 
-        if not self.event_tap:
-            print("[HOTKEY] Failed to create event tap - check Accessibility + Input Monitoring permissions")
-            return
-
-        # Create run loop source and add to current run loop
-        self.run_loop_source = CFMachPortCreateRunLoopSource(None, self.event_tap, 0)
-
-        CFRunLoopAddSource(
-            CFRunLoopGetCurrent(),
-            self.run_loop_source,
-            kCFRunLoopCommonModes
-        )
-
-        # Enable the event tap
-        CGEventTapEnable(self.event_tap, True)
-
-        print("[HOTKEY] Event tap active: Press Ctrl+Shift+V")
+        try:
+            self.listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+            self.listener.start()
+            print("[HOTKEY] Listener active: Press Ctrl+Shift+V")
+        except Exception as e:
+            print(f"[HOTKEY] Failed to start listener: {e}")
+            send_notification("KeyBridge", "Error", f"Failed to start hotkey listener: {str(e)[:50]}")
 
     def statusItemClicked_(self, sender):
         """Handle click on status bar icon."""
@@ -439,15 +365,9 @@ class KeyBridgeDelegate(NSObject):
 
     def quitApp_(self, sender):
         """Quit the application."""
-        # Stop event tap
-        if self.event_tap:
-            CGEventTapEnable(self.event_tap, False)
-            if self.run_loop_source:
-                CFRunLoopRemoveSource(
-                    CFRunLoopGetCurrent(),
-                    self.run_loop_source,
-                    kCFRunLoopCommonModes
-                )
+        # Stop listener
+        if self.listener:
+            self.listener.stop()
 
         # Cancel any pending timer
         if self.click_timer:
@@ -463,9 +383,6 @@ class KeyBridgeDelegate(NSObject):
 
 def main():
     global _delegate
-
-    # Register cleanup to run on any exit
-    atexit.register(cleanup_event_tap)
 
     # Register signal handlers for cleanup
     signal.signal(signal.SIGTERM, signal_handler)
