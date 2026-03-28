@@ -29,9 +29,20 @@ _BOX_CHARS = {
 }
 
 
-def convert_box_chars(text: str) -> str:
-    """Convert box-drawing characters to ASCII equivalents."""
-    return ''.join(_BOX_CHARS.get(c, c) for c in text)
+def convert_to_ascii(text: str) -> str:
+    """Convert all non-ASCII characters to ASCII equivalents."""
+    result = []
+    for c in text:
+        if ord(c) <= 127:
+            # Already ASCII
+            result.append(c)
+        elif c in _BOX_CHARS:
+            # Box-drawing character
+            result.append(_BOX_CHARS[c])
+        else:
+            # Remove non-ASCII characters not in mapping
+            pass  # Skip the character
+    return ''.join(result)
 
 
 def get_clipboard():
@@ -192,8 +203,8 @@ class KeyBridgeClient:
             print("Not connected")
             return
 
-        # Convert box-drawing characters to ASCII
-        text = convert_box_chars(text)
+        # Convert all non-ASCII to ASCII
+        text = convert_to_ascii(text)
 
         # Check for non-ASCII characters
         non_ascii = [(i, c, ord(c)) for i, c in enumerate(text) if ord(c) > 127]

@@ -29,9 +29,20 @@ _BOX_CHARS = {
 }
 
 
-def convert_box_chars(text: str) -> str:
-    """Convert box-drawing characters to ASCII equivalents."""
-    return ''.join(_BOX_CHARS.get(c, c) for c in text)
+def convert_to_ascii(text: str) -> str:
+    """Convert all non-ASCII characters to ASCII equivalents."""
+    result = []
+    for c in text:
+        if ord(c) <= 127:
+            # Already ASCII
+            result.append(c)
+        elif c in _BOX_CHARS:
+            # Box-drawing character
+            result.append(_BOX_CHARS[c])
+        else:
+            # Remove non-ASCII characters not in mapping
+            pass  # Skip the character
+    return ''.join(result)
 
 
 import objc
@@ -345,7 +356,7 @@ class KeyBridgeDelegate(NSObject):
 
             # Send text
             self._set_title("⌨️📤")
-            text = convert_box_chars(text)
+            text = convert_to_ascii(text)
             encoded = text.encode('utf-8')
 
             if len(encoded) > 60000:  # Flow control for large texts
