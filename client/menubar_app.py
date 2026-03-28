@@ -61,11 +61,14 @@ from Quartz import (
     kCGKeyboardEventKeycode,
     CGEventTapCreate,
     CGEventGetFlags,
+    CGEventSourceKeyState,
+    kCGEventSourceStateHIDSystemState,
     kCGSessionEventTap,
     kCGHeadInsertEventTap,
     kCGEventTapOptionDefault,
     CGEventMaskBit,
     kCGEventKeyDown,
+    kCGEventFlagsChanged,
     CGEventTapEnable,
     CFMachPortCreateRunLoopSource,
     CFRunLoopGetCurrent,
@@ -74,6 +77,8 @@ from Quartz import (
     kCFRunLoopCommonModes,
     kCGEventFlagMaskCommand,
     kCGEventFlagMaskSecondaryFn,
+    kCGEventFlagMaskControl,
+    kCGEventFlagMaskShift,
 )
 
 # BLE UUIDs (must match firmware)
@@ -95,18 +100,15 @@ def _create_event_tap_callback(delegate):
             if event_type != kCGEventKeyDown:
                 return event
 
-            # Get key code (9 = V key on macOS)
+            flags = CGEventGetFlags(event)
             keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
 
-            # Get modifier flags
-            flags = CGEventGetFlags(event)
+            # Check for Ctrl+Shift+V (keycode 9 = V key)
+            has_ctrl = (flags & kCGEventFlagMaskControl) != 0
+            has_shift = (flags & kCGEventFlagMaskShift) != 0
 
-            # Check for Fn+Cmd+V
-            has_fn = (flags & kCGEventFlagMaskSecondaryFn) != 0
-            has_cmd = (flags & kCGEventFlagMaskCommand) != 0
-
-            if keycode == 9 and has_fn and has_cmd:
-                print("[HOTKEY] Fn+Cmd+V triggered!")
+            if keycode == 9 and has_ctrl and has_shift:
+                print("[HOTKEY] Ctrl+Shift+V triggered!")
                 # Schedule on main thread
                 delegate.performSelectorOnMainThread_withObject_waitUntilDone_(
                     objc.selector(delegate.sendClipboard_, signature=b'v@:@'),
@@ -242,10 +244,10 @@ class KeyBridgeDelegate(NSObject):
         self._setup_event_tap()
 
     def _setup_event_tap(self):
-        """Setup CGEventTap for global hotkey (Fn+Cmd+V)."""
-        print("[HOTKEY] Setting up Fn+Cmd+V event tap...")
+        """Setup CGEventTap for global hotkey (Ctrl+Shift+V)."""
+        print("[HOTKEY] Setting up Ctrl+Shift+V event tap...")
 
-        # Create the event tap
+        # Create the event tap — listen to key down events
         event_mask = CGEventMaskBit(kCGEventKeyDown)
 
         # Create callback with proper closure over delegate
@@ -262,7 +264,7 @@ class KeyBridgeDelegate(NSObject):
         )
 
         if not self.event_tap:
-            print("[HOTKEY] Failed to create event tap - check permissions")
+            print("[HOTKEY] Failed to create event tap - check Accessibility + Input Monitoring permissions")
             return
 
         # Create run loop source and add to current run loop
@@ -277,7 +279,7 @@ class KeyBridgeDelegate(NSObject):
         # Enable the event tap
         CGEventTapEnable(self.event_tap, True)
 
-        print("[HOTKEY] Event tap active: Press Fn+Cmd+V")
+        print("[HOTKEY] Event tap active: Press Ctrl+Shift+V")
 
     def statusItemClicked_(self, sender):
         """Handle click on status bar icon."""
