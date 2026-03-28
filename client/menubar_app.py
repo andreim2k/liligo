@@ -124,8 +124,8 @@ class KeyBridgeDelegate(NSObject):
         self.double_click_threshold = 0.4
         self.click_timer = None
         self.listener = None
-        self.fn_pressed = False
-        self.cmd_pressed = False
+        self.ctrl_pressed = False
+        self.shift_pressed = False
 
         return self
 
@@ -154,6 +154,14 @@ class KeyBridgeDelegate(NSObject):
 
         self.menu.addItem_(NSMenuItem.separatorItem())
 
+        about_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "About KeyBridge", objc.selector(self.showAbout_, signature=b'v@:@'), ""
+        )
+        about_item.setTarget_(self)
+        self.menu.addItem_(about_item)
+
+        self.menu.addItem_(NSMenuItem.separatorItem())
+
         quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
             "Quit", objc.selector(self.quitApp_, signature=b'v@:@'), "q"
         )
@@ -167,21 +175,21 @@ class KeyBridgeDelegate(NSObject):
         self._setup_listener()
 
         # Notify that app started
-        send_notification("KeyBridge", "Ready", "Press Fn+Cmd+V to send clipboard")
+        send_notification("KeyBridge", "Ready", "Press Ctrl+Shift+V to send clipboard")
 
     def _setup_listener(self):
-        """Setup pynput keyboard listener for global hotkey (Fn+Cmd+V)."""
-        print("[HOTKEY] Setting up Fn+Cmd+V listener...")
+        """Setup pynput keyboard listener for global hotkey (Ctrl+Shift+V)."""
+        print("[HOTKEY] Setting up Ctrl+Shift+V listener...")
 
         def on_press(key):
             try:
-                if key == keyboard.Key.fn:
-                    self.fn_pressed = True
-                elif key in (keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r):
-                    self.cmd_pressed = True
+                if key == keyboard.Key.ctrl:
+                    self.ctrl_pressed = True
+                elif key == keyboard.Key.shift:
+                    self.shift_pressed = True
                 elif key == keyboard.Key.v:
-                    if self.fn_pressed and self.cmd_pressed:
-                        print("[HOTKEY] Fn+Cmd+V triggered!")
+                    if self.ctrl_pressed and self.shift_pressed:
+                        print("[HOTKEY] Ctrl+Shift+V triggered!")
                         self.performSelectorOnMainThread_withObject_waitUntilDone_(
                             objc.selector(self.sendClipboard_, signature=b'v@:@'),
                             None,
@@ -192,17 +200,17 @@ class KeyBridgeDelegate(NSObject):
 
         def on_release(key):
             try:
-                if key == keyboard.Key.fn:
-                    self.fn_pressed = False
-                elif key in (keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r):
-                    self.cmd_pressed = False
+                if key == keyboard.Key.ctrl:
+                    self.ctrl_pressed = False
+                elif key == keyboard.Key.shift:
+                    self.shift_pressed = False
             except AttributeError:
                 pass
 
         try:
             self.listener = keyboard.Listener(on_press=on_press, on_release=on_release)
             self.listener.start()
-            print("[HOTKEY] Listener active: Press Fn+Cmd+V")
+            print("[HOTKEY] Listener active: Press Ctrl+Shift+V")
         except Exception as e:
             print(f"[HOTKEY] Failed to start listener: {e}")
             send_notification("KeyBridge", "Error", f"Failed to start hotkey listener: {str(e)[:50]}")
@@ -241,6 +249,25 @@ class KeyBridgeDelegate(NSObject):
         self.click_timer = None
         self.last_click_time = 0
         self.status_item.popUpStatusItemMenu_(self.menu)
+
+    def showAbout_(self, sender):
+        """Show About dialog with hotkey info and permission requirements."""
+        from AppKit import NSAlert
+
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("KeyBridge - Bluetooth Keyboard Bridge")
+        alert.setInformativeText_(
+            "📱 Send clipboard text via Bluetooth to KeyBridge dongle\n\n"
+            "⌨️ Hotkey: Ctrl+Shift+V\n\n"
+            "🔐 Required Permissions:\n"
+            "• System Settings → Privacy & Security → Input Monitoring\n"
+            "  ✓ Add KeyBridge to the list\n\n"
+            "• System Settings → Privacy & Security → Accessibility\n"
+            "  ✓ Enable KeyBridge\n\n"
+            "If the hotkey doesn't work, grant these permissions and restart the app."
+        )
+        alert.addButtonWithTitle_("OK")
+        alert.runModal()
 
     def sendClipboard_(self, sender):
         """Send clipboard content to BLE device."""
