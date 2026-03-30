@@ -20,14 +20,28 @@ from typing import Optional
 from bleak import BleakClient, BleakScanner, BleakError
 
 # Unicode to ASCII character mappings
-_UNICODE_MAP = {
-    # Box-drawing characters
-    '┌': '+', '┐': '+', '└': '+', '┘': '+',
-    '├': '+', '┤': '+', '┬': '+', '┴': '+', '┼': '+',
-    '─': '-', '│': '|',
-    '╔': '+', '╗': '+', '╚': '+', '╝': '+',
-    '╠': '+', '╣': '+', '╦': '+', '╩': '+', '╬': '+',
-    '═': '=', '║': '|',
+def _build_unicode_map():
+    m = {}
+    # Box-drawing: full range U+2500–U+257F
+    # Horizontal lines -> '-'
+    for cp in [0x2500, 0x2504, 0x2508, 0x254C, 0x2550,  # light/dashed/double horizontal
+               0x2501, 0x2505, 0x2509, 0x254D]:          # heavy/dashed horizontal
+        m[chr(cp)] = '-'
+    # Vertical lines -> '|'
+    for cp in [0x2502, 0x2506, 0x250A, 0x254E, 0x2551,  # light/dashed/double vertical
+               0x2503, 0x2507, 0x250B, 0x254F]:          # heavy/dashed vertical
+        m[chr(cp)] = '|'
+    # All remaining box-drawing (corners, junctions, diagonals) -> '+'
+    for cp in range(0x2500, 0x2580):
+        if chr(cp) not in m:
+            m[chr(cp)] = '+'
+    # Block elements U+2580–U+259F -> '#'
+    for cp in range(0x2580, 0x25A0):
+        m[chr(cp)] = '#'
+    return m
+
+_UNICODE_MAP = _build_unicode_map()
+_UNICODE_MAP.update({
     # Smart quotes
     '\u201c': '"', '\u201d': '"', '\u201e': '"',
     '\u2018': "'", '\u2019': "'", '\u201a': "'",
@@ -83,7 +97,7 @@ _UNICODE_MAP = {
     '\u00f8': 'o', '\u00d8': 'O', '\u00df': 'ss', '\u0131': 'i',
     '\u0110': 'D', '\u0111': 'd', '\u0141': 'L', '\u0142': 'l',
     '\u017d': 'Z', '\u017e': 'z',
-}
+})
 
 
 def convert_to_ascii(text: str) -> str:
