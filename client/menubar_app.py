@@ -363,6 +363,15 @@ class KeyBridgeDelegate(NSObject):
         self.sending = True
         self._set_title("⌨️⏳")
 
+        # Safety net: auto-reset sending flag after 2 minutes
+        def _safety_reset():
+            if self.sending:
+                print("[SAFETY] Resetting stuck sending flag after timeout")
+                self._reset_ui()
+        self._send_timer = threading.Timer(120, _safety_reset)
+        self._send_timer.daemon = True
+        self._send_timer.start()
+
         # Run async in BLE thread
         if self.loop:
             asyncio.run_coroutine_threadsafe(
@@ -374,11 +383,13 @@ class KeyBridgeDelegate(NSObject):
         """Complete flow: connect → send → disconnect."""
         client = None
         try:
-            # Find device
+            # Find device (with retry in case dongle is mid-restart)
             device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=10.0)
             if device is None:
+                await asyncio.sleep(2)
+                device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=10.0)
+            if device is None:
                 send_notification("KeyBridge", "Not Found", f"Cannot find '{DEVICE_NAME}'")
-                self._reset_ui()
                 return
 
             # Connect
@@ -449,11 +460,14 @@ class KeyBridgeDelegate(NSObject):
                         timeout=10.0
                     )
             finally:
-                await client.stop_notify(CHAR_STATUS_UUID)
+                try:
+                    await client.stop_notify(CHAR_STATUS_UUID)
+                except Exception:
+                    pass  # Connection may already be lost
 
             send_notification("KeyBridge", "Sent", f"{len(text)} chars")
 
-        except (BleakError, OSError, asyncio.TimeoutError) as e:
+        except Exception as e:
             send_notification("KeyBridge", "Error", str(e)[:50])
 
         finally:
@@ -473,6 +487,9 @@ class KeyBridgeDelegate(NSObject):
         """Reset UI to idle state."""
         self._set_title("⌨️")
         self.sending = False
+        if hasattr(self, '_send_timer') and self._send_timer:
+            self._send_timer.cancel()
+            self._send_timer = None
 
     def _start_ble_thread(self):
         """Start the asyncio event loop in a background thread."""

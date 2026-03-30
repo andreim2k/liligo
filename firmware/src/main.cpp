@@ -19,6 +19,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <esp_task_wdt.h>
 
 // Display setup using LovyanGFX for T-Dongle-S3
 class LGFX : public lgfx::LGFX_Device
@@ -1110,12 +1111,17 @@ void setup()
     setLed(0, 50, 0);
     needsDisplayRefresh = true;
 
+    // Hardware watchdog: auto-restart if main loop hangs for >10 seconds
+    esp_task_wdt_init(10, true);  // 10s timeout, panic on timeout → restarts ESP32
+    esp_task_wdt_add(NULL);       // Register loopTask
+
     Serial.println("Ready! Default mode: Mouse Mover");
     Serial.println("Connect via BLE to switch to KeyBridge mode");
 }
 
 void loop()
 {
+    esp_task_wdt_reset();  // Feed watchdog every iteration
     unsigned long currentTime = millis();
 
     // Handle BLE reconnection with exponential backoff
@@ -1183,10 +1189,10 @@ void loop()
         }
     }
 
-    // Soft reset after BLE session: clear state and resume mouse mover (no reboot — preserves USB HID)
+    // Soft reset after BLE session: clear ALL state and resume mouse mover (no reboot — preserves USB HID)
     if (pendingRestart && !deviceConnected && localQueueStart == localQueueEnd)
     {
-        Serial.println("Buffer drained after BLE session — soft reset for clean state");
+        Serial.printf("Soft reset — heap: %d bytes\n", ESP.getFreeHeap());
 
         // Release any stuck HID keys
         Keyboard.releaseAll();
@@ -1196,13 +1202,18 @@ void loop()
         queueEnd.store(0, std::memory_order_release);
         peakQueueSize.store(0, std::memory_order_release);
 
-        // Reset flow control
+        // Reset ALL state (not just flow control)
         lastReportedFree = 0;
         lastCharTime = 0;
         keyCount = 0;
-
-        // Clear restart flag and resume advertising
         pendingRestart = false;
+        oldDeviceConnected = false;   // Prevent stale transition detection
+        reconnectAttempts = 0;        // Reset backoff counter
+        lastReconnectTime = 0;        // Allow immediate advertising
+
+        // Clean restart of advertising (stop first to ensure clean state)
+        BLEDevice::getAdvertising()->stop();
+        delay(50);
         BLEDevice::startAdvertising();
 
         // Ensure display refreshes to mouse mover
