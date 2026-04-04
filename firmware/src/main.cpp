@@ -434,8 +434,18 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
         size_t localQueueEnd = queueEnd.load(std::memory_order_acquire);
         size_t chars_added = 0;
 
+        // Calculate available space in the circular buffer
+        size_t available_space;
+        if (localQueueEnd >= localQueueStart) {
+            available_space = (localQueueStart > 0) ? localQueueStart - 1 : MAX_QUEUE_SIZE - 1;
+            available_space -= (localQueueEnd - localQueueStart);
+        } else {
+            available_space = localQueueStart - localQueueEnd - 1;
+        }
+
         // Process and queue directly in one pass (no intermediate String buffer)
-        for (size_t i = 0; i < value.length(); i++)
+        size_t i = 0;
+        for (; i < value.length() && chars_added < available_space; i++)
         {
             uint8_t c = (uint8_t)value[i];
 
@@ -470,14 +480,16 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
                     localQueueEnd = next;
                     chars_added++;
                 }
-                else
-                {
-                    // Buffer full - can't add more
-                    Serial.printf("WARNING: Queue full, dropped %d bytes (total %d chars added this write)\n",
-                                  (int)(value.length() - i), (int)chars_added);
-                    break;
-                }
+                // else: should not happen due to available_space check, but skip if it does
             }
+        }
+
+        // Warn if we had to drop data due to insufficient buffer space
+        if (i < value.length())
+        {
+            size_t dropped_chars = value.length() - i;
+            Serial.printf("WARNING: Queue full, dropped %d bytes (total %d chars added this write)\n",
+                          (int)dropped_chars, (int)chars_added);
         }
 
         // Update the actual atomic pointers only once after processing
@@ -1173,23 +1185,20 @@ void loop()
         localQueueStart = queueStart.load(std::memory_order_acquire);
     }
 
-    // Flow control: notify client of buffer free space
-    // Runs EVERY loop iteration (not just during typing) so client gets timely updates
-    // Rate-limited: only fires when 4KB+ freed or buffer fully drained
-    if (deviceConnected && pStatusCharacteristic)
-    {
-        size_t currentQueueSize = (localQueueEnd >= localQueueStart)
-            ? (localQueueEnd - localQueueStart)
-            : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
-        size_t currentFree = MAX_QUEUE_SIZE - 1 - currentQueueSize;
-        if (currentFree >= lastReportedFree + 4096 || currentQueueSize == 0)
-        {
-            uint32_t freeBytes = (uint32_t)currentFree;
-            pStatusCharacteristic->setValue((uint8_t *)&freeBytes, 4);
-            pStatusCharacteristic->notify();
-            lastReportedFree = currentFree;
-        }
-    }
+     // Flow control: notify client of buffer free space
+     // Runs EVERY loop iteration (not just during typing) so client gets timely updates
+     if (deviceConnected && pStatusCharacteristic)
+     {
+         size_t currentQueueSize = (localQueueEnd >= localQueueStart)
+             ? (localQueueEnd - localQueueStart)
+             : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
+         size_t currentFree = MAX_QUEUE_SIZE - 1 - currentQueueSize;
+         // Notify on every iteration for more responsive flow control
+         uint32_t freeBytes = (uint32_t)currentFree;
+         pStatusCharacteristic->setValue((uint8_t *)&freeBytes, 4);
+         pStatusCharacteristic->notify();
+         lastReportedFree = currentFree;
+     }
 
     // Soft reset after BLE session: clear ALL state and resume mouse mover (no reboot — preserves USB HID)
     if (pendingRestart && !deviceConnected && localQueueStart == localQueueEnd)

@@ -555,7 +555,6 @@ class KeyBridgeDelegate(NSObject):
             # Flow control: track firmware buffer free space via notifications
             FIRMWARE_BUFFER = 65535  # Exact usable buffer (64KB - 1 circular sentinel)
             SEND_THRESHOLD = 4096  # Pause sending if fewer than 4KB free
-            TOTAL_SEND_TIMEOUT = 30  # Max seconds to wait for buffer space
 
             buffer_event = asyncio.Event()
             buffer_event.set()
@@ -581,33 +580,29 @@ class KeyBridgeDelegate(NSObject):
                 for i in range(0, len(encoded), chunk_size):
                     chunk = encoded[i : i + chunk_size]
 
-                    # Wait if not enough free space (with total timeout to prevent infinite hangs)
+                    # Wait if not enough free space (with timeout to prevent infinite hangs)
                     wait_start = time.monotonic()
                     while current_free[0] < SEND_THRESHOLD:
-                        elapsed = time.monotonic() - wait_start
-                        if elapsed >= TOTAL_SEND_TIMEOUT:
-                            print(
-                                f"[FLOW] Buffer wait timed out after {elapsed:.1f}s, forcing through"
-                            )
-                            break
-
-                        remaining = TOTAL_SEND_TIMEOUT - elapsed
+                        # Wait for buffer space notification with timeout
                         buffer_event.clear()
                         try:
-                            await asyncio.wait_for(
-                                buffer_event.wait(), timeout=min(2.0, remaining)
-                            )
+                            await asyncio.wait_for(buffer_event.wait(), timeout=5.0)
                         except asyncio.TimeoutError:
-                            pass  # Re-read below
+                            # Re-check buffer status on timeout
+                            try:
+                                raw = await asyncio.wait_for(
+                                    client.read_gatt_char(CHAR_STATUS_UUID), timeout=2.0
+                                )
+                                current_free[0] = int.from_bytes(raw, "little")
+                            except Exception:
+                                pass  # Keep current estimate and continue waiting
 
-                        # Always re-read actual buffer status from firmware (no optimistic deduction)
-                        try:
-                            raw = await asyncio.wait_for(
-                                client.read_gatt_char(CHAR_STATUS_UUID), timeout=2.0
-                            )
-                            current_free[0] = int.from_bytes(raw, "little")
-                        except Exception:
-                            pass  # Keep current estimate, retry next iteration
+                            # Check if we've waited too long (30 seconds max)
+                            if time.monotonic() - wait_start > 30:
+                                print(
+                                    f"[FLOW] Buffer wait timed out after 30s, forcing through"
+                                )
+                                break
 
                     # Send with timeout — prevents infinite hang if firmware stops responding
                     await asyncio.wait_for(
@@ -615,14 +610,14 @@ class KeyBridgeDelegate(NSObject):
                         timeout=10.0,
                     )
 
-                    # Re-read actual buffer status after write (firmware may have consumed chars)
+                    # Update buffer status after write
                     try:
                         raw = await asyncio.wait_for(
                             client.read_gatt_char(CHAR_STATUS_UUID), timeout=2.0
                         )
                         current_free[0] = int.from_bytes(raw, "little")
                     except Exception:
-                        pass  # Will be refreshed on next iteration's wait loop
+                        pass  # Will be updated via notification or next read
             finally:
                 try:
                     await client.stop_notify(CHAR_STATUS_UUID)
