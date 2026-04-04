@@ -541,7 +541,7 @@ class KeyBridgeDelegate(NSObject):
             # Connect with a fresh client each session (no stale state)
             self._set_title("⌨️🔗")
             client = BleakClient(device)
-            await client.connect()
+            await asyncio.wait_for(client.connect(), timeout=10.0)
 
             # Calculate chunk size
             mtu = client.mtu_size
@@ -572,8 +572,12 @@ class KeyBridgeDelegate(NSObject):
                 pass  # Fall back to FIRMWARE_BUFFER default
 
             def status_callback(sender, data):
-                current_free[0] = int.from_bytes(data, "little")
-                buffer_event.set()
+                try:
+                    if data and len(data) >= 4:
+                        current_free[0] = int.from_bytes(data[:4], "little")
+                except Exception:
+                    pass
+                buffer_event.set()  # Always signal to prevent flow control hang
 
             await client.start_notify(CHAR_STATUS_UUID, status_callback)
             try:
@@ -622,10 +626,7 @@ class KeyBridgeDelegate(NSObject):
                 try:
                     await client.stop_notify(CHAR_STATUS_UUID)
                 except Exception:
-                    # Force disconnect if stop_notify fails (prevents stale callbacks)
-                    if client.is_connected:
-                        await client.disconnect()
-                    raise
+                    pass  # Swallow — outer finally handles disconnect
 
             # Wait for firmware to finish typing (queue fully drained)
             self._set_title("⌨️⏳")

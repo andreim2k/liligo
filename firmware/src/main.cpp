@@ -143,6 +143,8 @@ std::atomic<size_t> queueStart(0);  // ATOMIC: accessed by both BLE callback and
 std::atomic<size_t> queueEnd(0);    // ATOMIC: prevents data races with acquire/release semantics
 std::atomic<size_t> peakQueueSize(0);  // Track max queue size for progress bar
 size_t lastReportedFree = 0;  // Flow control: last reported free space (global for reset on connect)
+unsigned long lastNotifyTime = 0;  // Throttle BLE notifications to prevent stack saturation
+const unsigned long NOTIFY_INTERVAL = 50;  // Notify at most every 50ms (20 Hz)
 bool pendingRestart = false;  // Restart ESP32 after buffer drains post-disconnect
 unsigned long lastCharTime = 0;
 const unsigned long CHAR_INTERVAL = 5; // 5ms between chars - 200 chars/sec
@@ -382,6 +384,7 @@ class ServerCallbacks : public BLEServerCallbacks
 
         // Reset flow control state for new connection
         lastReportedFree = 0;
+        lastNotifyTime = 0;
 
         // Set initial buffer status so client can read it immediately
         if (pStatusCharacteristic)
@@ -1185,20 +1188,29 @@ void loop()
         localQueueStart = queueStart.load(std::memory_order_acquire);
     }
 
-     // Flow control: notify client of buffer free space
-     // Runs EVERY loop iteration (not just during typing) so client gets timely updates
-     if (deviceConnected && pStatusCharacteristic)
-     {
-         size_t currentQueueSize = (localQueueEnd >= localQueueStart)
-             ? (localQueueEnd - localQueueStart)
-             : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
-         size_t currentFree = MAX_QUEUE_SIZE - 1 - currentQueueSize;
-         // Notify on every iteration for more responsive flow control
-         uint32_t freeBytes = (uint32_t)currentFree;
-         pStatusCharacteristic->setValue((uint8_t *)&freeBytes, 4);
-         pStatusCharacteristic->notify();
-         lastReportedFree = currentFree;
-     }
+    // Flow control: notify client of buffer free space
+    // Throttled to max 20Hz AND only when value changed meaningfully
+    if (deviceConnected && pStatusCharacteristic)
+    {
+        size_t currentQueueSize = (localQueueEnd >= localQueueStart)
+            ? (localQueueEnd - localQueueStart)
+            : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
+        size_t currentFree = MAX_QUEUE_SIZE - 1 - currentQueueSize;
+
+        bool timeReady = getElapsedTime(lastNotifyTime, currentTime) >= NOTIFY_INTERVAL;
+        bool valueChanged = (currentFree != lastReportedFree) &&
+                            ((currentFree > lastReportedFree ? currentFree - lastReportedFree : lastReportedFree - currentFree) >= 64
+                             || currentFree == (MAX_QUEUE_SIZE - 1));
+
+        if (timeReady && valueChanged)
+        {
+            uint32_t freeBytes = (uint32_t)currentFree;
+            pStatusCharacteristic->setValue((uint8_t *)&freeBytes, 4);
+            pStatusCharacteristic->notify();
+            lastReportedFree = currentFree;
+            lastNotifyTime = currentTime;
+        }
+    }
 
     // Soft reset after BLE session: clear ALL state and resume mouse mover (no reboot — preserves USB HID)
     if (pendingRestart && !deviceConnected && localQueueStart == localQueueEnd)
@@ -1215,6 +1227,7 @@ void loop()
 
         // Reset ALL state (not just flow control)
         lastReportedFree = 0;
+        lastNotifyTime = 0;
         lastCharTime = 0;
         keyCount = 0;
         pendingRestart = false;
@@ -1224,7 +1237,7 @@ void loop()
 
         // Clean restart of advertising (stop first to ensure clean state)
         BLEDevice::getAdvertising()->stop();
-        delay(50);
+        delay(200);
         BLEDevice::startAdvertising();
 
         // Ensure display refreshes to mouse mover
