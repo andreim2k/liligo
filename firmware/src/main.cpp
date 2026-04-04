@@ -359,6 +359,8 @@ class ServerCallbacks : public BLEServerCallbacks
         deviceConnected = true;
         reconnectAttempts = 0;  // Reset backoff on successful connection
         pendingRestart = false;  // Clear restart flag in case connection arrives before restart
+        oldDeviceConnected = false;  // Prevent stale transition detection on rapid reconnects
+        peakQueueSize.store(0, std::memory_order_relaxed);  // Reset peak for new paste session
 
         // Store remaining countdown time before switching modes
         unsigned long elapsed = getElapsedTime(lastMoveTime, millis());
