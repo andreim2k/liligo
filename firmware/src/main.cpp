@@ -20,6 +20,8 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <esp_task_wdt.h>
+#include <Preferences.h>
+#include <string.h>
 
 // Display setup using LovyanGFX for T-Dongle-S3
 class LGFX : public lgfx::LGFX_Device
@@ -114,6 +116,8 @@ unsigned long pausedTimeRemaining = 0; // Store remaining time when BLE connects
 #define CHAR_TEXT_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define CHAR_HID_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 #define CHAR_STATUS_UUID "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+#define CHAR_CONFIG_UUID "beb5483e-36e1-4688-b7f5-ea07361b26ab"
+#define CHAR_TOTAL_UUID  "beb5483e-36e1-4688-b7f5-ea07361b26ac"
 
 // SECURITY NOTE: This firmware intentionally provides no authentication or encryption.
 // BLE pairing is disabled to maximize ease of use. Anyone within Bluetooth range can
@@ -126,10 +130,20 @@ BLEServer *pServer = nullptr;
 BLECharacteristic *pTextCharacteristic = nullptr;
 BLECharacteristic *pHidCharacteristic = nullptr;
 BLECharacteristic *pStatusCharacteristic = nullptr;
+BLECharacteristic *pConfigCharacteristic = nullptr;
+BLECharacteristic *pTotalCharacteristic = nullptr;
+
+// Paste progress — set by client before each paste, counted by main loop.
+// Both accessed from BLE callback (core 0) and main loop (core 1): use atomics.
+std::atomic<uint32_t> pasteTotalChars{0};  // total chars the client will send
+std::atomic<uint32_t> pasteTypedCount{0};  // chars typed so far this paste
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 unsigned int reconnectAttempts = 0;
 unsigned long lastReconnectTime = 0;
+
+// NVS for persisting the speed profile across reboots
+Preferences prefs;
 
 // Stats
 uint32_t keyCount = 0;
@@ -144,10 +158,46 @@ std::atomic<size_t> queueEnd(0);    // ATOMIC: prevents data races with acquire/
 std::atomic<size_t> peakQueueSize(0);  // Track max queue size for progress bar
 size_t lastReportedFree = 0;  // Flow control: last reported free space (global for reset on connect)
 unsigned long lastNotifyTime = 0;  // Throttle BLE notifications to prevent stack saturation
-const unsigned long NOTIFY_INTERVAL = 50;  // Notify at most every 50ms (20 Hz)
+const unsigned long NOTIFY_INTERVAL = 25;  // Notify at most every 25ms (40 Hz)
 bool pendingRestart = false;  // Restart ESP32 after buffer drains post-disconnect
 unsigned long lastCharTime = 0;
-const unsigned long CHAR_INTERVAL = 5; // 5ms between chars - 200 chars/sec
+
+// Runtime-configurable typing timing (set by applyProfile via CHAR_CONFIG_UUID).
+// Defaults reflect the Normal profile and are overridden by the value loaded
+// from NVS in setup().
+volatile uint8_t CHAR_INTERVAL = 4;   // ms between consecutive key presses
+volatile uint8_t KEY_HOLD_MS   = 2;   // duration Keyboard.press() stays asserted
+volatile uint8_t KEY_GAP_MS    = 1;   // delay after releaseAll() before next press
+volatile uint8_t currentProfile = 1;  // 0=Slow, 1=Normal, 2=Fast
+
+void applyProfile(uint8_t id)
+{
+    if (id > 4) id = 1;
+    currentProfile = id;
+    switch (id)
+    {
+    case 0:  // Slow — VM-safe fallback (~125 chars/sec)
+        CHAR_INTERVAL = 8; KEY_HOLD_MS = 5; KEY_GAP_MS = 3;
+        break;
+    case 2:  // Fast — real-host aggressive (~500 chars/sec)
+        CHAR_INTERVAL = 2; KEY_HOLD_MS = 2; KEY_GAP_MS = 0;
+        break;
+    case 3:  // Turbo — USB HID floor, simple editors only (~1000 chars/sec)
+        CHAR_INTERVAL = 1; KEY_HOLD_MS = 1; KEY_GAP_MS = 0;
+        break;
+    case 4:  // Ultra — no rate gate, TinyUSB-paced, edit.exe only (uncapped)
+        CHAR_INTERVAL = 0; KEY_HOLD_MS = 0; KEY_GAP_MS = 0;
+        break;
+    case 1:  // Normal — real-host default (~250 chars/sec)
+    default:
+        CHAR_INTERVAL = 4; KEY_HOLD_MS = 2; KEY_GAP_MS = 1;
+        break;
+    }
+    Serial.printf("Profile applied: %u (interval=%u hold=%u gap=%u)\n",
+                  (unsigned)id, (unsigned)CHAR_INTERVAL,
+                  (unsigned)KEY_HOLD_MS, (unsigned)KEY_GAP_MS);
+}
+
 
 // HID modifier bits
 #define MOD_LCTRL 0x01
@@ -438,13 +488,10 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
         size_t chars_added = 0;
 
         // Calculate available space in the circular buffer
-        size_t available_space;
-        if (localQueueEnd >= localQueueStart) {
-            available_space = (localQueueStart > 0) ? localQueueStart - 1 : MAX_QUEUE_SIZE - 1;
-            available_space -= (localQueueEnd - localQueueStart);
-        } else {
-            available_space = localQueueStart - localQueueEnd - 1;
-        }
+        size_t used = (localQueueEnd >= localQueueStart)
+            ? (localQueueEnd - localQueueStart)
+            : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
+        size_t available_space = (MAX_QUEUE_SIZE - 1) - used;
 
         // Process and queue directly in one pass (no intermediate String buffer)
         size_t i = 0;
@@ -487,21 +534,12 @@ class TextCharCallbacks : public BLECharacteristicCallbacks
             }
         }
 
-        // Warn if we had to drop data due to insufficient buffer space
-        if (i < value.length())
-        {
-            size_t dropped_chars = value.length() - i;
-            Serial.printf("WARNING: Queue full, dropped %d bytes (total %d chars added this write)\n",
-                          (int)dropped_chars, (int)chars_added);
-        }
-
         // Update the actual atomic pointers only once after processing
         queueEnd.store(localQueueEnd, std::memory_order_release);
 
-        size_t queue_size = (localQueueEnd >= localQueueStart) ? (localQueueEnd - localQueueStart) : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
-        if (chars_added > 0)
+        if (i < value.length())
         {
-            Serial.printf("Text queued: %d chars (queue: %d/%d)\n", chars_added, queue_size, MAX_QUEUE_SIZE);
+            Serial.printf("WARNING: Queue full, dropped %d bytes\n", (int)(value.length() - i));
         }
     }
 };
@@ -522,6 +560,39 @@ class HidCharCallbacks : public BLECharacteristicCallbacks
         sendHidKey(modifiers, keycode);
     }
 };
+
+// Config characteristic callbacks: 1-2 byte payload [profile_id, version].
+// Persists selection in NVS so it survives reboots.
+class ConfigCharCallbacks : public BLECharacteristicCallbacks
+{
+    void onWrite(BLECharacteristic *pCharacteristic) override
+    {
+        std::string value = pCharacteristic->getValue();
+        if (value.length() < 1) return;
+        uint8_t newProfile = (uint8_t)value[0];
+        if (newProfile > 4) newProfile = 1;
+        prefs.putUChar("prof", newProfile);
+        applyProfile(newProfile);
+    }
+};
+
+// Total characteristic callbacks: 4-byte little-endian uint32 = total chars
+// the client will send this paste. Resets pasteTypedCount so the display
+// can show an exact countdown from N to 0.
+class TotalCharCallbacks : public BLECharacteristicCallbacks
+{
+    void onWrite(BLECharacteristic *pCharacteristic) override
+    {
+        std::string value = pCharacteristic->getValue();
+        if (value.length() < 4) return;
+        const uint8_t *p = (const uint8_t *)value.data();
+        uint32_t total = (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+                         ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+        pasteTotalChars.store(total, std::memory_order_release);
+        pasteTypedCount.store(0, std::memory_order_release);
+    }
+};
+
 
 // ============================================================================
 // Mouse Mover Functions
@@ -862,120 +933,156 @@ void updateMouseMoverDisplay()
 }
 
 /**
- * Display BLE typing progress bar
+ * Display BLE typing progress — exact countdown from total to 0.
+ *
+ * If the client wrote the total char count to CHAR_TOTAL_UUID before
+ * pasting, we show:
+ *   - Remaining chars (large, counts down)
+ *   - Accurate progress bar & percentage (pasteTypedCount / pasteTotalChars)
+ *   - ETA in MM:SS
+ * If the client did NOT write a total (legacy / unknown), we fall back to
+ * the queue-size bar so the display is never blank.
  */
 void updateBLEDisplay()
 {
     static unsigned long lastUpdate = 0;
-
-    // Update every 100ms for smooth animation
     if (getElapsedTime(lastUpdate, millis()) < 100)
         return;
     lastUpdate = millis();
 
-    // Get current queue status
-    size_t localQueueStart = queueStart.load(std::memory_order_relaxed);
-    size_t localQueueEnd = queueEnd.load(std::memory_order_relaxed);
-    size_t currentQueueSize = (localQueueEnd >= localQueueStart)
-        ? (localQueueEnd - localQueueStart)
-        : (MAX_QUEUE_SIZE - localQueueStart + localQueueEnd);
+    int W = lcd.width();
 
-    // Calculate progress (how much has been consumed)
-    float progress = 0.0;
-    size_t peak = peakQueueSize.load(std::memory_order_relaxed);
-    if (peak > 0)
+    // ── Snapshot counters ──────────────────────────────────────────────────
+    uint32_t total  = pasteTotalChars.load(std::memory_order_acquire);
+    uint32_t typed  = pasteTypedCount.load(std::memory_order_relaxed);
+    if (typed > total) typed = total;          // clamp (race edge)
+    uint32_t remaining = total - typed;
+
+    size_t qStart = queueStart.load(std::memory_order_relaxed);
+    size_t qEnd   = queueEnd.load(std::memory_order_relaxed);
+    size_t qSize  = (qEnd >= qStart) ? (qEnd - qStart)
+                                     : (MAX_QUEUE_SIZE - qStart + qEnd);
+
+    // ── Progress fraction ──────────────────────────────────────────────────
+    float progress = 0.0f;
+    if (total > 0)
     {
-        size_t remaining = currentQueueSize;
-        size_t consumed = peak - remaining;
+        progress = (float)typed / (float)total;
+        if (progress > 1.0f) progress = 1.0f;
+    }
+    else if (peakQueueSize.load(std::memory_order_relaxed) > 0)
+    {
+        // Legacy fallback: no total given, use queue consumption ratio
+        size_t peak = peakQueueSize.load(std::memory_order_relaxed);
+        size_t consumed = (peak > qSize) ? (peak - qSize) : 0;
         progress = (float)consumed / (float)peak;
-        if (progress > 1.0) progress = 1.0;
+        if (progress > 1.0f) progress = 1.0f;
     }
 
-    int dispWidth = lcd.width();
-    int dispHeight = lcd.height();
+    int pct = (int)(progress * 100.0f);
 
-    // Draw title - normal font at top
+    // ── Row 1: title ───────────────────────────────────────────────────────
+    lcd.fillRect(0, 0, W, 13, COLOR_BG);
     lcd.setTextSize(1);
     lcd.setTextColor(COLOR_ACCENT);
-    lcd.setCursor(2, 10);
-    lcd.print("Sending chars...");
+    lcd.setCursor(2, 3);
+    if (total > 0 && remaining == 0)
+        lcd.print("  DONE!         ");
+    else
+        lcd.print("  KEYBRIDGE     ");
 
-    // Draw progress bar
-    int barX = 5;
-    int barY = 35;
-    int barWidth = dispWidth - 10;
-    int barHeight = 12;
-
-    // Background
-    lcd.fillRect(barX, barY, barWidth, barHeight, COLOR_PANEL);
-    lcd.drawRect(barX, barY, barWidth, barHeight, COLOR_ACCENT);
-
-    // Progress fill (left to right)
-    int fillWidth = (int)((barWidth - 2) * progress);
-    if (fillWidth > 0)
+    // ── Row 2: BIG remaining count (or "DONE") ─────────────────────────────
+    lcd.fillRect(0, 14, W, 20, COLOR_BG);
+    lcd.setTextSize(2);
+    if (total > 0)
     {
-        // Color gradient based on progress
-        uint16_t fillColor = COLOR_SUCCESS;  // Green by default
-        if (progress < 0.5)
-            fillColor = COLOR_WARNING;  // Orange for early progress
-        else if (progress > 0.9)
-            fillColor = COLOR_SUCCESS;  // Green near completion
-
-        lcd.fillRect(barX + 1, barY + 1, fillWidth, barHeight - 2, fillColor);
-    }
-
-    // Stats text - clear character areas before drawing
-
-    // Progress line - clear entire line to prevent overwriting
-    lcd.fillRect(0, 50, dispWidth, 10, COLOR_BG);
-    lcd.setTextColor(COLOR_DIM);
-    lcd.setTextSize(1);
-    lcd.setCursor(5, 52);
-    lcd.print("Progress:");
-
-    // Percentage - cleared before writing
-    lcd.setTextColor(COLOR_TEXT);
-    lcd.setCursor(50, 52);
-    char progText[16];
-    sprintf(progText, "%d%%", (int)(progress * 100));
-    lcd.print(progText);
-
-    // Queue status line - clear entire queue data area to prevent overwriting
-    lcd.fillRect(0, 63, dispWidth, 10, COLOR_BG);
-    lcd.setTextColor(COLOR_DIM);
-    lcd.setCursor(5, 65);
-    lcd.print("Queue:");
-
-    lcd.setTextColor(COLOR_TEXT);
-    lcd.setCursor(40, 65);
-    char queueText[24];
-    size_t peakSize = peakQueueSize.load(std::memory_order_relaxed);
-    sprintf(queueText, "%d/%d bytes", currentQueueSize, peakSize);
-    lcd.print(queueText);
-
-    // Typing speed indicator - clear and redraw
-    lcd.fillRect(5, 76, 70, 10, COLOR_BG);
-    lcd.setTextColor(COLOR_DIM);
-    lcd.setCursor(5, 78);
-    lcd.print("Typing...");
-
-    // Estimated time remaining - clear and redraw
-    lcd.fillRect(5, 93, 75, 10, COLOR_BG);
-    if (currentQueueSize > 0 && CHAR_INTERVAL > 0)
-    {
-        unsigned long remainingSecs = (currentQueueSize * CHAR_INTERVAL) / 1000;
-        lcd.setTextColor(COLOR_TEXT);
-        lcd.setCursor(5, 95);
-        char timeText[24];
-        sprintf(timeText, "ETA: %lu sec", remainingSecs);
-        lcd.print(timeText);
+        char remBuf[12];
+        sprintf(remBuf, "%lu", (unsigned long)remaining);
+        // right-align in the display width
+        int charW = 12;  // textSize=2 → 6px base × 2 = 12px per char
+        int textPx = strlen(remBuf) * charW;
+        int cx = (W - textPx) / 2;
+        if (cx < 2) cx = 2;
+        lcd.setTextColor(remaining == 0 ? COLOR_SUCCESS : COLOR_TEXT);
+        lcd.setCursor(cx, 16);
+        lcd.print(remBuf);
     }
     else
     {
-        // When queue is empty, show done message
+        // No total: show queue size
+        char remBuf[12];
+        sprintf(remBuf, "%lu", (unsigned long)qSize);
+        int charW = 12;
+        int textPx = strlen(remBuf) * charW;
+        int cx = (W - textPx) / 2;
+        if (cx < 2) cx = 2;
+        lcd.setTextColor(COLOR_DIM);
+        lcd.setCursor(cx, 16);
+        lcd.print(remBuf);
+    }
+
+    // ── Row 3: Progress bar ────────────────────────────────────────────────
+    int barX = 3, barY = 37, barW = W - 6, barH = 10;
+    lcd.fillRect(barX, barY, barW, barH, COLOR_PANEL);
+    lcd.drawRect(barX, barY, barW, barH, COLOR_ACCENT);
+    int fill = (int)((barW - 2) * progress);
+    if (fill > 0)
+    {
+        uint16_t col = (pct < 50) ? COLOR_WARNING
+                     : (pct < 90) ? COLOR_ACCENT
+                                  : COLOR_SUCCESS;
+        lcd.fillRect(barX + 1, barY + 1, fill, barH - 2, col);
+    }
+
+    // ── Row 4: percentage + typed/total ────────────────────────────────────
+    lcd.fillRect(0, 50, W, 11, COLOR_BG);
+    lcd.setTextSize(1);
+    lcd.setTextColor(COLOR_TEXT);
+    lcd.setCursor(2, 52);
+    char pctBuf[32];
+    if (total > 0)
+        sprintf(pctBuf, "%d%% (%lu/%lu)", pct, (unsigned long)typed, (unsigned long)total);
+    else
+        sprintf(pctBuf, "%d%% (queue)", pct);
+    lcd.print(pctBuf);
+
+    // ── Row 5: ETA ─────────────────────────────────────────────────────────
+    lcd.fillRect(0, 63, W, 11, COLOR_BG);
+    lcd.setTextSize(1);
+    if (total > 0 && remaining > 0 && CHAR_INTERVAL > 0)
+    {
+        unsigned long etaSec = ((unsigned long)remaining * CHAR_INTERVAL) / 1000UL;
+        unsigned long mm = etaSec / 60;
+        unsigned long ss = etaSec % 60;
+        char etaBuf[24];
+        if (mm > 0)
+            sprintf(etaBuf, "ETA: %lu:%02lu min", mm, ss);
+        else
+            sprintf(etaBuf, "ETA: %lu sec", ss);
+        lcd.setTextColor(COLOR_DIM);
+        lcd.setCursor(2, 65);
+        lcd.print(etaBuf);
+    }
+    else if (total > 0 && remaining == 0)
+    {
         lcd.setTextColor(COLOR_SUCCESS);
-        lcd.setCursor(5, 95);
-        lcd.print("Done!");
+        lcd.setCursor(2, 65);
+        lcd.print("All chars typed!");
+    }
+    else if (qSize > 0 && CHAR_INTERVAL > 0)
+    {
+        unsigned long etaSec = ((unsigned long)qSize * CHAR_INTERVAL) / 1000UL;
+        char etaBuf[24];
+        sprintf(etaBuf, "ETA: %lu sec", etaSec);
+        lcd.setTextColor(COLOR_DIM);
+        lcd.setCursor(2, 65);
+        lcd.print(etaBuf);
+    }
+    else
+    {
+        lcd.setTextColor(COLOR_DIM);
+        lcd.setCursor(2, 65);
+        lcd.print("Typing...");
     }
 }
 
@@ -1110,6 +1217,24 @@ void setup()
         BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
     pStatusCharacteristic->addDescriptor(new BLE2902());
 
+    pConfigCharacteristic = pService->createCharacteristic(
+        CHAR_CONFIG_UUID,
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+    static ConfigCharCallbacks configCharCallbacks;
+    pConfigCharacteristic->setCallbacks(&configCharCallbacks);
+
+    pTotalCharacteristic = pService->createCharacteristic(
+        CHAR_TOTAL_UUID,
+        BLECharacteristic::PROPERTY_WRITE);
+    static TotalCharCallbacks totalCharCallbacks;
+    pTotalCharacteristic->setCallbacks(&totalCharCallbacks);
+
+    // Load persisted speed profile (default Normal on first boot)
+    prefs.begin("kb", false);
+    uint8_t savedProfile = prefs.getUChar("prof", 1);
+    applyProfile(savedProfile);
+    pConfigCharacteristic->setValue(&savedProfile, 1);
+
     pService->start();
 
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -1180,16 +1305,20 @@ void loop()
         char c = textQueueBuffer[localQueueStart];
         queueStart.store((localQueueStart + 1) % MAX_QUEUE_SIZE, std::memory_order_release);
 
-        Keyboard.write(c);  // write() handles shift mapping automatically
+        Keyboard.press(c);
+        if (KEY_HOLD_MS > 0) delay(KEY_HOLD_MS);
+        Keyboard.releaseAll();
+        if (KEY_GAP_MS > 0) delay(KEY_GAP_MS);
         keyCount++;
-        lastCharTime = currentTime;
+        pasteTypedCount.fetch_add(1, std::memory_order_relaxed);
+        lastCharTime = millis();
 
         // Re-read queueStart after advancing (localQueueStart is now stale)
         localQueueStart = queueStart.load(std::memory_order_acquire);
     }
 
     // Flow control: notify client of buffer free space
-    // Throttled to max 20Hz AND only when value changed meaningfully
+    // Throttled to max 40Hz AND only when value changed meaningfully
     if (deviceConnected && pStatusCharacteristic)
     {
         size_t currentQueueSize = (localQueueEnd >= localQueueStart)
@@ -1199,7 +1328,7 @@ void loop()
 
         bool timeReady = getElapsedTime(lastNotifyTime, currentTime) >= NOTIFY_INTERVAL;
         bool valueChanged = (currentFree != lastReportedFree) &&
-                            ((currentFree > lastReportedFree ? currentFree - lastReportedFree : lastReportedFree - currentFree) >= 64
+                            ((currentFree > lastReportedFree ? currentFree - lastReportedFree : lastReportedFree - currentFree) >= 32
                              || currentFree == (MAX_QUEUE_SIZE - 1));
 
         if (timeReady && valueChanged)
@@ -1234,6 +1363,10 @@ void loop()
         oldDeviceConnected = false;   // Prevent stale transition detection
         reconnectAttempts = 0;        // Reset backoff counter
         lastReconnectTime = 0;        // Allow immediate advertising
+
+        // Reset paste progress tracking for next session
+        pasteTotalChars.store(0, std::memory_order_relaxed);
+        pasteTypedCount.store(0, std::memory_order_relaxed);
 
         // Clean restart of advertising (stop first to ensure clean state)
         BLEDevice::getAdvertising()->stop();

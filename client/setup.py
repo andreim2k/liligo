@@ -38,6 +38,7 @@ OPTIONS = {
     },
     'iconfile': 'KeyBridge.icns',
     'includes': PACKAGES + [
+        'char_convert',
         'pynput', 'pynput.keyboard', 'pynput.keyboard._darwin',
         'pynput.mouse', 'pynput.mouse._darwin',
         'pynput._util', 'pynput._util.darwin',

@@ -8,6 +8,7 @@ on the target computer via USB HID.
 
 import argparse
 import asyncio
+import struct
 import sys
 import signal
 import subprocess
@@ -18,31 +19,7 @@ from typing import Optional
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 
-# Box-drawing characters to ASCII
-_BOX_CHARS = {
-    '┌': '+', '┐': '+', '└': '+', '┘': '+',
-    '├': '+', '┤': '+', '┬': '+', '┴': '+', '┼': '+',
-    '─': '-', '│': '|',
-    '╔': '+', '╗': '+', '╚': '+', '╝': '+',
-    '╠': '+', '╣': '+', '╦': '+', '╩': '+', '╬': '+',
-    '═': '=', '║': '|',
-}
-
-
-def convert_to_ascii(text: str) -> str:
-    """Convert all non-ASCII characters to ASCII equivalents."""
-    result = []
-    for c in text:
-        if ord(c) <= 127:
-            # Already ASCII
-            result.append(c)
-        elif c in _BOX_CHARS:
-            # Box-drawing character
-            result.append(_BOX_CHARS[c])
-        else:
-            # Remove non-ASCII characters not in mapping
-            pass  # Skip the character
-    return ''.join(result)
+from char_convert import convert_to_ascii, firmware_filter
 
 
 def get_clipboard():
@@ -99,8 +76,18 @@ SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 CHAR_TEXT_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 CHAR_HID_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 CHAR_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+CHAR_CONFIG_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ab"
+CHAR_TOTAL_UUID  = "beb5483e-36e1-4688-b7f5-ea07361b26ac"
 
 DEVICE_NAME = "KeyBridge"
+
+PROFILE_SLOW = 0
+PROFILE_NORMAL = 1
+PROFILE_FAST = 2
+PROFILE_TURBO = 3
+PROFILE_ULTRA = 4
+PROFILE_NAMES = {PROFILE_SLOW: "slow", PROFILE_NORMAL: "normal", PROFILE_FAST: "fast", PROFILE_TURBO: "turbo", PROFILE_ULTRA: "ultra"}
+
 
 # HID Modifier bits
 MOD_LCTRL = 0x01
@@ -226,63 +213,109 @@ class KeyBridgeClient:
                 await self.client.write_gatt_char(CHAR_TEXT_UUID, bytes([byte]), response=True)
                 await asyncio.sleep(0.05)  # 50ms between chars for visibility
         else:
-            # Send in chunks with acknowledgment for reliability
-            total_chunks = (len(encoded) + self.chunk_size - 1) // self.chunk_size
-            print(f"Sending {len(encoded)} bytes in {total_chunks} chunks (chunk_size={self.chunk_size})...")
-
-            # Flow control: track firmware buffer free space via notifications
-            FIRMWARE_BUFFER = 65535  # Exact usable buffer (64KB - 1)
-            SEND_THRESHOLD = 4096   # Pause sending if fewer than 4KB free
-
-            buffer_event = asyncio.Event()
-            buffer_event.set()
-            current_free = [FIRMWARE_BUFFER]
-
-            # Read actual buffer status from firmware
+            # Tell firmware exact filtered char count for accurate display.
+            total_chars = len(firmware_filter(encoded))
             try:
-                raw = await asyncio.wait_for(
-                    self.client.read_gatt_char(CHAR_STATUS_UUID), timeout=3.0)
-                val = int.from_bytes(raw, 'little')
-                if val > 0:
-                    current_free[0] = val
+                await asyncio.wait_for(
+                    self.client.write_gatt_char(
+                        CHAR_TOTAL_UUID, struct.pack("<I", total_chars), response=True
+                    ),
+                    timeout=5.0,
+                )
+            except Exception as e:
+                print(f"[TOTAL] Failed to write total chars: {e}")
+            await self._send_chunked(encoded)
+
+        print(f"Sent {len(text)} characters ({len(encoded)} bytes)")
+
+    async def _send_chunked(self, encoded: bytes):
+        """Send encoded bytes in MTU-sized chunks with flow control.
+
+        Uses STATUS notifications (+ per-chunk reads as fallback) to track
+        firmware free space. Stops sending when fewer than SEND_THRESHOLD
+        bytes are free, then waits for space to open up."""
+
+        total_chunks = (len(encoded) + self.chunk_size - 1) // self.chunk_size
+        print(f"Sending {len(encoded)} bytes in {total_chunks} chunks (chunk_size={self.chunk_size})...")
+
+        FIRMWARE_BUFFER = 65535
+        SEND_THRESHOLD = 4096  # pause if fewer than 4 KB free
+
+        buffer_event = asyncio.Event()
+        buffer_event.set()
+        current_free = [FIRMWARE_BUFFER]
+
+        # Seed with actual firmware free space before starting
+        try:
+            raw = await asyncio.wait_for(
+                self.client.read_gatt_char(CHAR_STATUS_UUID), timeout=3.0)
+            val = int.from_bytes(raw, 'little')
+            if val > 0:
+                current_free[0] = val
+        except Exception:
+            pass
+
+        def status_callback(sender, data):
+            try:
+                if data and len(data) >= 4:
+                    current_free[0] = int.from_bytes(data[:4], 'little')
+            except Exception:
+                pass
+            buffer_event.set()
+
+        await self.client.start_notify(CHAR_STATUS_UUID, status_callback)
+        try:
+            for i in range(0, len(encoded), self.chunk_size):
+                chunk = encoded[i:i + self.chunk_size]
+
+                # Wait if firmware buffer is nearly full
+                wait_start = time.monotonic()
+                while current_free[0] < SEND_THRESHOLD:
+                    buffer_event.clear()
+                    try:
+                        await asyncio.wait_for(buffer_event.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        # Fallback: read STATUS directly
+                        try:
+                            raw = await asyncio.wait_for(
+                                self.client.read_gatt_char(CHAR_STATUS_UUID), timeout=2.0)
+                            current_free[0] = int.from_bytes(raw, 'little')
+                        except Exception:
+                            pass
+                        if time.monotonic() - wait_start > 30:
+                            print("[FLOW] Buffer wait timed out after 30s, forcing through")
+                            break
+
+                await asyncio.wait_for(
+                    self.client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True),
+                    timeout=10.0,
+                )
+
+                # Read actual free space after each write — belt-and-suspenders
+                try:
+                    raw = await asyncio.wait_for(
+                        self.client.read_gatt_char(CHAR_STATUS_UUID), timeout=2.0)
+                    current_free[0] = int.from_bytes(raw, 'little')
+                except Exception:
+                    # Notification will update it soon; pessimistically deduct
+                    current_free[0] = max(0, current_free[0] - len(chunk))
+        finally:
+            try:
+                await self.client.stop_notify(CHAR_STATUS_UUID)
             except Exception:
                 pass
 
-            def status_callback(sender, data):
-                current_free[0] = int.from_bytes(data, 'little')
-                buffer_event.set()
-
-            await self.client.start_notify(CHAR_STATUS_UUID, status_callback)
-            try:
-                for i in range(0, len(encoded), self.chunk_size):
-                    chunk = encoded[i:i + self.chunk_size]
-
-                    # Wait if not enough free space
-                    while current_free[0] < SEND_THRESHOLD:
-                        buffer_event.clear()
-                        try:
-                            await asyncio.wait_for(buffer_event.wait(), timeout=5.0)
-                        except asyncio.TimeoutError:
-                            try:
-                                raw = await asyncio.wait_for(
-                                    self.client.read_gatt_char(CHAR_STATUS_UUID), timeout=3.0)
-                                current_free[0] = int.from_bytes(raw, 'little')
-                            except Exception:
-                                current_free[0] = max(current_free[0], SEND_THRESHOLD)
-                            if current_free[0] < SEND_THRESHOLD:
-                                continue
-                            break
-
-                    current_free[0] = max(0, current_free[0] - len(chunk))
-
-                    await asyncio.wait_for(
-                        self.client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True),
-                        timeout=10.0
-                    )
-            finally:
-                await self.client.stop_notify(CHAR_STATUS_UUID)
-
-        print(f"Sent {len(text)} characters ({len(encoded)} bytes)")
+    async def set_profile(self, profile_id: int):
+        """Write the speed profile to the firmware (persists in NVS)."""
+        if profile_id not in (PROFILE_SLOW, PROFILE_NORMAL, PROFILE_FAST):
+            raise ValueError(f"profile_id must be 0/1/2, got {profile_id}")
+        if not self.client or not self.client.is_connected:
+            print("Not connected")
+            return
+        await self.client.write_gatt_char(
+            CHAR_CONFIG_UUID, bytes([profile_id, 0x01]), response=True
+        )
+        print(f"Profile set to {PROFILE_NAMES[profile_id]} ({profile_id})")
 
     async def send_hid_key(self, modifiers: int, keycode: int):
         """Send a raw HID key event."""
@@ -692,6 +725,12 @@ async def main():
         type=str,
         help="Custom filename to save as on target"
     )
+    parser.add_argument(
+        "--profile",
+        type=str,
+        choices=("slow", "normal", "fast", "turbo", "ultra"),
+        help="Set firmware speed profile before sending (persisted in NVS)"
+    )
 
     args = parser.parse_args()
 
@@ -711,6 +750,10 @@ async def main():
         # Connect to device
         if not await client.scan_and_connect(timeout=args.timeout):
             sys.exit(1)
+
+        if args.profile:
+            profile_map = {"slow": PROFILE_SLOW, "normal": PROFILE_NORMAL, "fast": PROFILE_FAST}
+            await client.set_profile(profile_map[args.profile])
 
         if args.file:
             # File mode

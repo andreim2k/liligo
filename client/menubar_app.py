@@ -10,239 +10,18 @@ Single-click: show menu
 import asyncio
 import atexit
 import signal
+import struct
 import subprocess
 import sys
 import threading
 import time
-import unicodedata
 from typing import Optional
 
 from bleak import BleakClient, BleakScanner, BleakError
-
-
-# Unicode to ASCII character mappings
-def _build_unicode_map():
-    m = {}
-    # Box-drawing: full range U+2500–U+257F
-    # Horizontal lines -> '-'
-    for cp in [
-        0x2500,
-        0x2504,
-        0x2508,
-        0x254C,
-        0x2550,  # light/dashed/double horizontal
-        0x2501,
-        0x2505,
-        0x2509,
-        0x254D,
-    ]:  # heavy/dashed horizontal
-        m[chr(cp)] = "-"
-    # Vertical lines -> '|'
-    for cp in [
-        0x2502,
-        0x2506,
-        0x250A,
-        0x254E,
-        0x2551,  # light/dashed/double vertical
-        0x2503,
-        0x2507,
-        0x250B,
-        0x254F,
-    ]:  # heavy/dashed vertical
-        m[chr(cp)] = "|"
-    # All remaining box-drawing (corners, junctions, diagonals) -> '+'
-    for cp in range(0x2500, 0x2580):
-        if chr(cp) not in m:
-            m[chr(cp)] = "+"
-    # Block elements U+2580–U+259F -> '#'
-    for cp in range(0x2580, 0x25A0):
-        m[chr(cp)] = "#"
-    return m
-
-
-_UNICODE_MAP = _build_unicode_map()
-_UNICODE_MAP.update(
-    {
-        # Smart quotes
-        "\u201c": '"',
-        "\u201d": '"',
-        "\u201e": '"',
-        "\u2018": "'",
-        "\u2019": "'",
-        "\u201a": "'",
-        "\u00ab": '"',
-        "\u00bb": '"',
-        # Dashes and hyphens
-        "\u2014": "-",
-        "\u2013": "-",
-        "\u2010": "-",
-        "\u2011": "-",
-        "\u2012": "-",
-        "\u2015": "-",
-        "\ufe58": "-",
-        "\ufe63": "-",
-        "\uff0d": "-",
-        # Spaces (non-breaking, em-space, en-space, thin, etc.)
-        "\u00a0": " ",
-        "\u2002": " ",
-        "\u2003": " ",
-        "\u2004": " ",
-        "\u2005": " ",
-        "\u2006": " ",
-        "\u2007": " ",
-        "\u2008": " ",
-        "\u2009": " ",
-        "\u200a": " ",
-        "\u202f": " ",
-        "\u205f": " ",
-        # Zero-width characters (drop them)
-        "\u200b": "",
-        "\u200c": "",
-        "\u200d": "",
-        "\ufeff": "",
-        "\u200e": "",
-        "\u200f": "",
-        # Common symbols
-        "\u2026": "...",
-        "\u2022": "*",
-        "\u2023": "*",
-        "\u25cf": "*",
-        "\u25cb": "o",
-        "\u25a0": "#",
-        "\u25a1": "[]",
-        "\u25aa": "*",
-        "\u25ab": "*",
-        "\u00b0": "o",
-        "\u00a7": "SS",
-        "\u00b6": "P",
-        "\u00b1": "+/-",
-        "\u00d7": "x",
-        "\u00f7": "/",
-        "\u2264": "<=",
-        "\u2265": ">=",
-        "\u2260": "!=",
-        "\u2248": "~=",
-        "\u221e": "inf",
-        "\u221a": "sqrt",
-        # Arrows
-        "\u2192": "->",
-        "\u2190": "<-",
-        "\u2191": "^",
-        "\u2193": "v",
-        "\u21d2": "=>",
-        "\u21d0": "<=",
-        "\u21d4": "<=>",
-        "\u2794": "->",
-        "\u279c": "->",
-        "\u27a1": "->",
-        # Legal/trademark
-        "\u2122": "(TM)",
-        "\u00a9": "(C)",
-        "\u00ae": "(R)",
-        # Currency
-        "\u20ac": "EUR",
-        "\u00a3": "GBP",
-        "\u00a5": "YEN",
-        "\u00a2": "c",
-        "\u20b9": "INR",
-        "\u20bd": "RUB",
-        "\u20a9": "KRW",
-        # Fractions
-        "\u00bc": "1/4",
-        "\u00bd": "1/2",
-        "\u00be": "3/4",
-        "\u2153": "1/3",
-        "\u2154": "2/3",
-        # Superscripts / subscripts
-        "\u00b2": "2",
-        "\u00b3": "3",
-        "\u00b9": "1",
-        "\u2070": "0",
-        "\u2074": "4",
-        "\u2075": "5",
-        "\u2076": "6",
-        "\u2077": "7",
-        "\u2078": "8",
-        "\u2079": "9",
-        # Misc punctuation and symbols
-        "\u2018": "'",
-        "\u2019": "'",
-        "\u00bf": "?",
-        "\u00a1": "!",
-        "\u2116": "No.",
-        "\u2030": "0/00",
-        "\u2031": "0/000",
-        "\u00b7": ".",
-        "\u2027": ".",
-        "\u30fb": ".",
-        # Checkmarks, crosses, media symbols
-        "\u2713": "[v]",
-        "\u2714": "[v]",
-        "\u2715": "[x]",
-        "\u2716": "[x]",
-        "\u2717": "[x]",
-        "\u2718": "[x]",
-        "\u23fa": "(o)",
-        "\u23f8": "||",
-        "\u23f9": "[]",
-        "\u23ef": "|>",
-        "\u25b6": ">",
-        "\u25c0": "<",
-        "\u23f5": ">",
-        "\u23f4": "<",
-        "\u2b50": "*",
-        "\u2605": "*",
-        "\u2606": "*",
-        "\u2764": "<3",
-        "\u2665": "<3",
-        # Musical notes
-        "\u266a": "#",
-        "\u266b": "##",
-        "\u266c": "##",
-        "\u266d": "b",
-        "\u266e": "h",
-        "\u266f": "#",
-        # Accented vowels (common ones not handled by unicodedata NFKD)
-        "\u00e6": "ae",
-        "\u00c6": "AE",
-        "\u0153": "oe",
-        "\u0152": "OE",
-        "\u00f8": "o",
-        "\u00d8": "O",
-        "\u00df": "ss",
-        "\u0131": "i",
-        "\u0110": "D",
-        "\u0111": "d",
-        "\u0141": "L",
-        "\u0142": "l",
-        "\u017d": "Z",
-        "\u017e": "z",
-    }
-)
-
-
-def convert_to_ascii(text: str) -> str:
-    """Convert all non-ASCII characters to ASCII equivalents."""
-    result = []
-    for c in text:
-        if ord(c) <= 127:
-            result.append(c)
-        elif c in _UNICODE_MAP:
-            result.append(_UNICODE_MAP[c])
-        else:
-            # Fallback: use Unicode decomposition to strip accents (e.g. e with accent -> e)
-            nfkd = unicodedata.normalize("NFKD", c)
-            ascii_chars = "".join(ch for ch in nfkd if ord(ch) <= 127)
-            if ascii_chars:
-                result.append(ascii_chars)
-            else:
-                # Last resort: replace with ? so nothing is silently lost
-                result.append("?")
-    return "".join(result)
-
+from char_convert import convert_to_ascii, firmware_filter
 
 import objc
-from Foundation import NSObject, NSRunLoop, NSDate, NSTimer
+from Foundation import NSObject, NSRunLoop, NSDate, NSTimer, NSUserDefaults
 from AppKit import (
     NSApplication,
     NSStatusBar,
@@ -250,6 +29,8 @@ from AppKit import (
     NSMenuItem,
     NSVariableStatusItemLength,
     NSImage,
+    NSOnState,
+    NSOffState,
 )
 from PyObjCTools import AppHelper
 from pynput import keyboard
@@ -258,8 +39,19 @@ from pynput import keyboard
 SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 CHAR_TEXT_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 CHAR_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+CHAR_CONFIG_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ab"
+CHAR_TOTAL_UUID  = "beb5483e-36e1-4688-b7f5-ea07361b26ac"
 
 DEVICE_NAME = "KeyBridge"
+
+PROFILE_SLOW = 0
+PROFILE_NORMAL = 1
+PROFILE_FAST = 2
+PROFILE_TURBO = 3
+PROFILE_ULTRA = 4
+PROFILE_LABELS = {PROFILE_SLOW: "Slow", PROFILE_NORMAL: "Normal", PROFILE_FAST: "Fast", PROFILE_TURBO: "Turbo", PROFILE_ULTRA: "Ultra"}
+PROFILE_DEFAULTS_KEY = "profile"
+
 
 # Global delegate reference
 _delegate = None
@@ -328,6 +120,17 @@ class KeyBridgeDelegate(NSObject):
         self.ctrl_pressed = False
         self.cmd_pressed = False
 
+        # Load persisted profile selection (default Normal); the firmware itself
+        # persists the same value in NVS so the two should stay in sync.
+        defaults = NSUserDefaults.standardUserDefaults()
+        stored = defaults.objectForKey_(PROFILE_DEFAULTS_KEY)
+        self.current_profile = (
+            int(stored) if stored is not None else PROFILE_NORMAL
+        )
+        if self.current_profile not in PROFILE_LABELS:
+            self.current_profile = PROFILE_NORMAL
+        self.profile_menu_items = {}
+
         return self
 
     def applicationDidFinishLaunching_(self, notification):
@@ -352,6 +155,33 @@ class KeyBridgeDelegate(NSObject):
         )
         send_item.setTarget_(self)
         self.menu.addItem_(send_item)
+
+        self.menu.addItem_(NSMenuItem.separatorItem())
+
+        # Speed profile submenu
+        profile_root = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "Speed Profile", None, ""
+        )
+        profile_submenu = NSMenu.alloc().init()
+        for pid, label in (
+            (PROFILE_SLOW, "Slow (~125 chars/sec, VM-safe)"),
+            (PROFILE_NORMAL, "Normal (~250 chars/sec)"),
+            (PROFILE_FAST, "Fast (~500 chars/sec)"),
+            (PROFILE_TURBO, "Turbo (~1000 chars/sec, simple editors only)"),
+            (PROFILE_ULTRA, "Ultra (uncapped, TinyUSB-paced, edit.exe only)"),
+        ):
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                label,
+                objc.selector(self.selectProfile_, signature=b"v@:@"),
+                "",
+            )
+            item.setTarget_(self)
+            item.setTag_(pid)
+            item.setState_(NSOnState if pid == self.current_profile else NSOffState)
+            profile_submenu.addItem_(item)
+            self.profile_menu_items[pid] = item
+        profile_root.setSubmenu_(profile_submenu)
+        self.menu.addItem_(profile_root)
 
         self.menu.addItem_(NSMenuItem.separatorItem())
 
@@ -492,6 +322,51 @@ class KeyBridgeDelegate(NSObject):
         alert.addButtonWithTitle_("OK")
         alert.runModal()
 
+    def selectProfile_(self, sender):
+        """Profile submenu click handler. Persists locally and pushes to dongle."""
+        new_profile = int(sender.tag())
+        if new_profile not in PROFILE_LABELS:
+            return
+        self.current_profile = new_profile
+
+        defaults = NSUserDefaults.standardUserDefaults()
+        defaults.setInteger_forKey_(new_profile, PROFILE_DEFAULTS_KEY)
+
+        for pid, item in self.profile_menu_items.items():
+            item.setState_(NSOnState if pid == new_profile else NSOffState)
+
+        if self.loop:
+            asyncio.run_coroutine_threadsafe(
+                self._push_profile_to_dongle(new_profile), self.loop
+            )
+
+    async def _push_profile_to_dongle(self, profile_id: int):
+        """Briefly connect to the dongle just to set the speed profile.
+        The firmware persists it in NVS so this only needs to run once per
+        change — subsequent pastes will already see the new profile."""
+        client = None
+        try:
+            device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=5.0)
+            if device is None:
+                send_notification("KeyBridge", "Profile", "Dongle not found")
+                return
+            client = BleakClient(device)
+            await asyncio.wait_for(client.connect(), timeout=10.0)
+            await client.write_gatt_char(
+                CHAR_CONFIG_UUID, bytes([profile_id, 0x01]), response=True
+            )
+            send_notification(
+                "KeyBridge", "Profile", f"Set to {PROFILE_LABELS[profile_id]}"
+            )
+        except Exception as e:
+            send_notification("KeyBridge", "Profile error", str(e)[:50])
+        finally:
+            if client and client.is_connected:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+
     def sendClipboard_(self, sender):
         """Send clipboard content to BLE device."""
         if self.sending:
@@ -522,10 +397,9 @@ class KeyBridgeDelegate(NSObject):
             )
 
     async def _send_clipboard_flow(self, text):
-        """Complete flow: connect → send → wait for completion → disconnect."""
+        """Connect → send chunks with proven flow control → wait for completion → disconnect."""
         client = None
         try:
-            # Find device (with retry in case dongle is mid-restart)
             device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=10.0)
             if device is None:
                 await asyncio.sleep(2)
@@ -538,100 +412,34 @@ class KeyBridgeDelegate(NSObject):
                 )
                 return
 
-            # Connect with a fresh client each session (no stale state)
             self._set_title("⌨️🔗")
             client = BleakClient(device)
             await asyncio.wait_for(client.connect(), timeout=10.0)
 
-            # Calculate chunk size
             mtu = client.mtu_size
             chunk_size = mtu - 3
 
-            # Send text
             self._set_title("⌨️📤")
             text = convert_to_ascii(text)
             encoded = text.encode("utf-8")
 
-            # Flow control: track firmware buffer free space via notifications
-            FIRMWARE_BUFFER = 65535  # Exact usable buffer (64KB - 1 circular sentinel)
-            SEND_THRESHOLD = 4096  # Pause sending if fewer than 4KB free
-
-            buffer_event = asyncio.Event()
-            buffer_event.set()
-            current_free = [FIRMWARE_BUFFER]
-
-            # Read actual buffer status from firmware (set on connect)
+            # Tell firmware the exact filtered char count so the display
+            # can show an accurate countdown.
+            total_chars = len(firmware_filter(encoded))
             try:
-                raw = await asyncio.wait_for(
-                    client.read_gatt_char(CHAR_STATUS_UUID), timeout=3.0
+                await asyncio.wait_for(
+                    client.write_gatt_char(
+                        CHAR_TOTAL_UUID, struct.pack("<I", total_chars), response=True
+                    ),
+                    timeout=5.0,
                 )
-                val = int.from_bytes(raw, "little")
-                if val > 0:
-                    current_free[0] = val
-            except Exception:
-                pass  # Fall back to FIRMWARE_BUFFER default
+            except Exception as e:
+                print(f"[TOTAL] Failed to write total chars: {e}")
 
-            def status_callback(sender, data):
-                try:
-                    if data and len(data) >= 4:
-                        current_free[0] = int.from_bytes(data[:4], "little")
-                except Exception:
-                    pass
-                buffer_event.set()  # Always signal to prevent flow control hang
+            await self._send_chunks(client, encoded, chunk_size)
 
-            await client.start_notify(CHAR_STATUS_UUID, status_callback)
-            try:
-                for i in range(0, len(encoded), chunk_size):
-                    chunk = encoded[i : i + chunk_size]
-
-                    # Wait if not enough free space (with timeout to prevent infinite hangs)
-                    wait_start = time.monotonic()
-                    while current_free[0] < SEND_THRESHOLD:
-                        # Wait for buffer space notification with timeout
-                        buffer_event.clear()
-                        try:
-                            await asyncio.wait_for(buffer_event.wait(), timeout=5.0)
-                        except asyncio.TimeoutError:
-                            # Re-check buffer status on timeout
-                            try:
-                                raw = await asyncio.wait_for(
-                                    client.read_gatt_char(CHAR_STATUS_UUID), timeout=2.0
-                                )
-                                current_free[0] = int.from_bytes(raw, "little")
-                            except Exception:
-                                pass  # Keep current estimate and continue waiting
-
-                            # Check if we've waited too long (30 seconds max)
-                            if time.monotonic() - wait_start > 30:
-                                print(
-                                    f"[FLOW] Buffer wait timed out after 30s, forcing through"
-                                )
-                                break
-
-                    # Send with timeout — prevents infinite hang if firmware stops responding
-                    await asyncio.wait_for(
-                        client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True),
-                        timeout=10.0,
-                    )
-
-                    # Update buffer status after write
-                    try:
-                        raw = await asyncio.wait_for(
-                            client.read_gatt_char(CHAR_STATUS_UUID), timeout=2.0
-                        )
-                        current_free[0] = int.from_bytes(raw, "little")
-                    except Exception:
-                        pass  # Will be updated via notification or next read
-            finally:
-                try:
-                    await client.stop_notify(CHAR_STATUS_UUID)
-                except Exception:
-                    pass  # Swallow — outer finally handles disconnect
-
-            # Wait for firmware to finish typing (queue fully drained)
             self._set_title("⌨️⏳")
             await self._wait_for_completion(client)
-
             send_notification("KeyBridge", "Sent", f"{len(text)} chars")
 
         except Exception as e:
@@ -645,10 +453,79 @@ class KeyBridgeDelegate(NSObject):
                     pass
             self._reset_ui()
 
+    async def _send_chunks(self, client, encoded: bytes, chunk_size: int):
+        """Send encoded bytes in chunks with STATUS-based flow control.
+        Uses notifications + per-chunk reads (belt and suspenders)."""
+        FIRMWARE_BUFFER = 65535
+        SEND_THRESHOLD = 4096  # pause if fewer than 4 KB free
+
+        buffer_event = asyncio.Event()
+        buffer_event.set()
+        current_free = [FIRMWARE_BUFFER]
+
+        try:
+            raw = await asyncio.wait_for(
+                client.read_gatt_char(CHAR_STATUS_UUID), timeout=3.0
+            )
+            val = int.from_bytes(raw, "little")
+            if val > 0:
+                current_free[0] = val
+        except Exception:
+            pass
+
+        def status_callback(sender, data):
+            try:
+                if data and len(data) >= 4:
+                    current_free[0] = int.from_bytes(data[:4], "little")
+            except Exception:
+                pass
+            buffer_event.set()
+
+        await client.start_notify(CHAR_STATUS_UUID, status_callback)
+        try:
+            for i in range(0, len(encoded), chunk_size):
+                chunk = encoded[i : i + chunk_size]
+
+                wait_start = time.monotonic()
+                while current_free[0] < SEND_THRESHOLD:
+                    buffer_event.clear()
+                    try:
+                        await asyncio.wait_for(buffer_event.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        try:
+                            raw = await asyncio.wait_for(
+                                client.read_gatt_char(CHAR_STATUS_UUID), timeout=2.0
+                            )
+                            current_free[0] = int.from_bytes(raw, "little")
+                        except Exception:
+                            pass
+                        if time.monotonic() - wait_start > 30:
+                            print("[FLOW] Buffer wait timed out, forcing through")
+                            break
+
+                await asyncio.wait_for(
+                    client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True),
+                    timeout=10.0,
+                )
+
+                # Per-chunk read: belt-and-suspenders flow control
+                try:
+                    raw = await asyncio.wait_for(
+                        client.read_gatt_char(CHAR_STATUS_UUID), timeout=2.0
+                    )
+                    current_free[0] = int.from_bytes(raw, "little")
+                except Exception:
+                    current_free[0] = max(0, current_free[0] - len(chunk))
+        finally:
+            try:
+                await client.stop_notify(CHAR_STATUS_UUID)
+            except Exception:
+                pass
+
     async def _wait_for_completion(self, client):
-        """Wait until firmware reports buffer is fully free (typing complete)."""
+        """Poll STATUS until firmware queue is fully drained (typing complete)."""
         FIRMWARE_BUFFER_FULL = 65535
-        COMPLETION_TIMEOUT = 180  # 3 minutes max for very large pastes
+        COMPLETION_TIMEOUT = 300  # 5 minutes max for very large pastes
         POLL_INTERVAL = 1.0
 
         start = time.monotonic()
@@ -658,9 +535,7 @@ class KeyBridgeDelegate(NSObject):
         while True:
             elapsed = time.monotonic() - start
             if elapsed >= COMPLETION_TIMEOUT:
-                print(
-                    f"[COMPLETE] Timed out after {elapsed:.1f}s — firmware may still be typing"
-                )
+                print(f"[COMPLETE] Timed out after {elapsed:.1f}s")
                 return
 
             try:
@@ -671,24 +546,20 @@ class KeyBridgeDelegate(NSObject):
             except Exception:
                 stall_count += 1
                 if stall_count >= 10:
-                    print(
-                        f"[COMPLETE] Stalled reading status for {stall_count} attempts"
-                    )
                     return
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
 
-            stall_count = 0  # Reset on successful read
+            stall_count = 0
 
             if current_free >= FIRMWARE_BUFFER_FULL - 1:
-                print(f"[COMPLETE] Firmware queue drained after {elapsed:.1f}s")
+                print(f"[COMPLETE] Queue drained after {elapsed:.1f}s")
                 return
 
-            # Detect stall (buffer not freeing for 30+ seconds)
             if current_free == last_free:
                 stall_count += 1
                 if stall_count >= 30:
-                    print(f"[COMPLETE] Buffer stalled at {current_free} free for 30s")
+                    print(f"[COMPLETE] Buffer stalled at {current_free} free")
                     return
             else:
                 stall_count = 0
