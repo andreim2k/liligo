@@ -24,6 +24,17 @@ from char_convert import convert_to_ascii, firmware_filter
 
 def get_clipboard():
     """Get clipboard content on macOS, preserving all formatting."""
+    # NSPasteboard first: pbpaste transcodes to the default text encoding and
+    # replaces anything it can't represent with a literal '?', losing the very
+    # Unicode convert_to_ascii() exists to translate.
+    try:
+        from AppKit import NSPasteboard
+        pb = NSPasteboard.generalPasteboard()
+        data = pb.dataForType_("public.utf8-plain-text")
+        if data is not None:
+            return bytes(data).decode('utf-8', errors='replace')
+    except Exception:
+        pass
     try:
         # Use text=False to get raw bytes, then decode to preserve all chars
         result = subprocess.run(['pbpaste'], capture_output=True, text=False, timeout=2)

@@ -9,6 +9,7 @@ Single-click: show menu
 
 import asyncio
 import atexit
+import os
 import signal
 import struct
 import subprocess
@@ -31,6 +32,7 @@ from AppKit import (
     NSImage,
     NSOnState,
     NSOffState,
+    NSPasteboard,
 )
 from PyObjCTools import AppHelper
 from pynput import keyboard
@@ -65,12 +67,42 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 
+LOG_PATH = os.path.expanduser("~/Library/Logs/KeyBridge.log")
+
+
+def debug_log(label, value):
+    """Append a diagnostic line; the .app has no console to print to."""
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%H:%M:%S')} {label}: {value!r}\n")
+    except OSError:
+        pass
+
+
 def get_clipboard():
-    """Get clipboard content on macOS."""
+    """Get clipboard content on macOS.
+
+    Reads NSPasteboard directly rather than shelling out to pbpaste: pbpaste
+    transcodes to the process's default text encoding and substitutes '?' for
+    every character it cannot represent. That destroys exactly the Unicode
+    convert_to_ascii() is meant to translate — by the time we saw the text,
+    'U+2212' had already become a literal '?'.
+    """
+    try:
+        pb = NSPasteboard.generalPasteboard()
+        data = pb.dataForType_("public.utf8-plain-text")
+        if data is not None:
+            return bytes(data).decode("utf-8", errors="replace")
+        text = pb.stringForType_("public.utf8-plain-text")
+        if text is not None:
+            return str(text)
+    except Exception as e:
+        debug_log("NSPasteboard read failed, falling back to pbpaste", str(e))
     try:
         result = subprocess.run(["pbpaste"], capture_output=True, text=False, timeout=2)
         return result.stdout.decode("utf-8", errors="replace")
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        debug_log("clipboard read failed", str(e))
         return None
 
 
@@ -420,7 +452,9 @@ class KeyBridgeDelegate(NSObject):
             chunk_size = mtu - 3
 
             self._set_title("⌨️📤")
+            debug_log("before convert", text[:200])
             text = convert_to_ascii(text)
+            debug_log("after convert", text[:200])
             encoded = text.encode("utf-8")
 
             # Tell firmware the exact filtered char count so the display
