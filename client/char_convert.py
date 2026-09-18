@@ -64,6 +64,47 @@ _UNICODE_MAP.update(
         "﹘": "-",
         "﹣": "-",
         "－": "-",
+        "−": "-",  # minus sign
+        "⁃": "-",  # hyphen bullet
+        "˗": "-",  # modifier letter minus
+        "➖": "-",  # heavy minus sign
+        "ー": "-",  # katakana prolonged sound mark
+        "⸺": "--",  # two-em dash
+        "⸻": "---",  # three-em dash
+        "­": "",  # soft hyphen (invisible)
+        # More quotes / primes / accents used as quotes
+        "‛": "'",
+        "‟": '"',
+        "‹": "<",
+        "›": ">",
+        "′": "'",  # prime
+        "″": '"',  # double prime
+        "‴": "'''",
+        "ʼ": "'",  # modifier apostrophe
+        "ʹ": "'",
+        "ʺ": '"',
+        "´": "'",  # acute accent
+        "ˋ": "`",
+        "ˆ": "^",  # modifier circumflex
+        "˜": "~",  # small tilde
+        # Math / operator look-alikes of keyboard symbols
+        "⁄": "/",  # fraction slash
+        "∕": "/",  # division slash
+        "∖": "\\",  # set minus
+        "∗": "*",  # asterisk operator
+        "∣": "|",  # divides
+        "∶": ":",  # ratio
+        "∼": "~",  # tilde operator
+        "〜": "~",  # wave dash
+        "⁓": "~",  # swung dash
+        "⦁": "*",
+        "∙": "*",  # bullet operator
+        "⋅": ".",  # dot operator
+        "․": ".",  # one dot leader
+        "‥": "..",
+        "◦": "o",  # white bullet
+        "‣": "*",
+        "⁎": "*",
         # Spaces (non-breaking, em-space, en-space, thin, etc.)
         " ": " ",
         " ": " ",
@@ -215,8 +256,25 @@ def convert_to_ascii(text: str) -> str:
             if ascii_chars:
                 result.append(ascii_chars)
             else:
-                result.append("?")
+                result.append(_fallback(c))
     return "".join(result)
+
+
+def _fallback(c: str) -> str:
+    """Guess an ASCII equivalent from the Unicode category/name."""
+    cat = unicodedata.category(c)
+    name = unicodedata.name(c, "")
+    if cat == "Pd" or "HYPHEN" in name or "MINUS" in name or "DASH" in name:
+        return "-"
+    if cat == "Zs":
+        return " "
+    if cat in ("Cf", "Mn", "Me"):  # invisible format chars, combining marks
+        return ""
+    if cat in ("Pi", "Pf") or "QUOTATION" in name or "APOSTROPHE" in name:
+        return "'" if "SINGLE" in name or "APOSTROPHE" in name else '"'
+    if "BULLET" in name:
+        return "*"
+    return "?"
 
 
 def firmware_filter(data: bytes) -> bytes:
