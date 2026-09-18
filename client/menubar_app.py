@@ -452,9 +452,7 @@ class KeyBridgeDelegate(NSObject):
             chunk_size = mtu - 3
 
             self._set_title("⌨️📤")
-            debug_log("before convert", text[:200])
             text = convert_to_ascii(text)
-            debug_log("after convert", text[:200])
             encoded = text.encode("utf-8")
 
             # Tell firmware the exact filtered char count so the display

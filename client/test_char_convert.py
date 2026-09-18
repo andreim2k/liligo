@@ -24,6 +24,10 @@ CASES = {
     " ": " ", "　": " ", " ": " ", "​": "", "⁠": "",
     # Fullwidth ASCII
     "Ａｂｃ１！": "Abc1!",
+    # Line breaks
+    "a b": "a\nb", "a b": "a\nb", "ab": "a\nb",
+    # Must not be flattened to '-' by the name-based fallback
+    "⇢": "->", "⇠": "<-", "∓": "-/+", "⇥": "?",
     # Bullets
     "•": "*", "◦": "o", "∙": "*",
 }

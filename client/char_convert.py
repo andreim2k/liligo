@@ -105,6 +105,15 @@ _UNICODE_MAP.update(
         "◦": "o",  # white bullet
         "‣": "*",
         "⁎": "*",
+        "∓": "-/+",  # minus-or-plus sign
+        "⇠": "<-",  # dashed arrows
+        "⇡": "^",
+        "⇢": "->",
+        "⇣": "v",
+        # Line breaks that aren't \n
+        " ": "\n",  # line separator
+        " ": "\n",  # paragraph separator
+        "": "\n",  # next line (NEL)
         # Spaces (non-breaking, em-space, en-space, thin, etc.)
         " ": " ",
         " ": " ",
@@ -264,10 +273,16 @@ def _fallback(c: str) -> str:
     """Guess an ASCII equivalent from the Unicode category/name."""
     cat = unicodedata.category(c)
     name = unicodedata.name(c, "")
-    if cat == "Pd" or "HYPHEN" in name or "MINUS" in name or "DASH" in name:
+    # Whole-word match: "DASHED ARROW" or "MINUS-OR-PLUS" must not become '-'.
+    words = set(name.split())
+    if cat == "Pd" or (
+        words & {"HYPHEN", "MINUS", "DASH"} and "ARROW" not in words
+    ):
         return "-"
     if cat == "Zs":
         return " "
+    if cat in ("Zl", "Zp"):
+        return "\n"
     if cat in ("Cf", "Mn", "Me"):  # invisible format chars, combining marks
         return ""
     if cat in ("Pi", "Pf") or "QUOTATION" in name or "APOSTROPHE" in name:
