@@ -67,7 +67,13 @@ public:
             cfg.dummy_read_pixel = 8;
             cfg.dummy_read_bits = 1;
             cfg.memory_width = 132;
-            cfg.memory_height = 160;
+            // The ST7735S GRAM is 132x162, not 132x160. With 160 here the
+            // flipped (180 degree) offset computes as memory_height -
+            // (panel_height + offset_y) = -1, shifting the image off the panel
+            // and clipping a row. 162 is the real size and makes the visible
+            // window symmetric (1 row spare at each end, 26 columns each side),
+            // so rotation 0 is unchanged and rotation 2 lands correctly.
+            cfg.memory_height = 162;
             _panel_instance.config(cfg);
         }
         {
@@ -103,6 +109,11 @@ OperatingMode currentMode = MODE_MOUSE_MOVER;
 OperatingMode lastDisplayMode = MODE_MOUSE_MOVER; // Track which screen is showing
 bool needsDisplayRefresh = true;
 bool needsModeSwitch = false; // Force full screen clear on mode switch
+
+// Screen orientation. 0 = default (dongle on the right of the laptop),
+// 2 = flipped 180 degrees (dongle on the left). Toggled by the BOOT button
+// and persisted in NVS so it survives reboots and replugs.
+uint8_t displayRotation = 0;
 
 // Mouse mover timing variables
 unsigned long lastMoveTime = 0;
@@ -220,10 +231,18 @@ void applyProfile(uint8_t id)
 #define COLOR_DIM 0x8410     // Gray
 #define COLOR_KEY 0xFFE0     // Yellow
 
-// Set LED color
+// Set LED color.
+//
+// The RGB LED is disabled: its status colors and the purple flash on every
+// mouse jiggle were distracting. The call sites are left in place so the LED
+// can be brought back by restoring the body below; every request writes black
+// so the LED stays dark no matter what color was asked for.
 void setLed(uint8_t r, uint8_t g, uint8_t b)
 {
-    ledColors[0] = rgb_color{r, g, b};
+    (void)r;
+    (void)g;
+    (void)b;
+    ledColors[0] = rgb_color{0, 0, 0};
     ledStrip.write(ledColors, 1);
 }
 
@@ -1156,6 +1175,57 @@ void updateDisplay()
 // Setup and Loop
 // ============================================================================
 
+/**
+ * Apply the current screen orientation and force a full repaint.
+ * Both panels redraw from scratch on needsModeSwitch/needsDisplayRefresh.
+ */
+void applyRotation()
+{
+    lcd.setRotation(displayRotation);
+    lcd.fillScreen(COLOR_BG);
+    needsDisplayRefresh = true;
+    needsModeSwitch = true;
+}
+
+/**
+ * BOOT button (GPIO0, active LOW): short press flips the screen 180 degrees
+ * so the dongle stays readable plugged into either side of the laptop.
+ *
+ * Non-blocking debounce — the main loop must keep feeding the watchdog and
+ * typing queued characters, so this never delays.
+ */
+void handleButton()
+{
+    static bool lastStable = true;      // true = released (pin pulled high)
+    static bool lastReading = true;
+    static unsigned long lastChange = 0;
+    const unsigned long DEBOUNCE_MS = 40;
+
+    bool reading = (digitalRead(BUTTON_PIN) == HIGH);
+    unsigned long now = millis();
+
+    if (reading != lastReading)
+    {
+        lastReading = reading;
+        lastChange = now;
+        return;
+    }
+
+    if (getElapsedTime(lastChange, now) < DEBOUNCE_MS || reading == lastStable)
+        return;
+
+    lastStable = reading;
+
+    // Act on press (HIGH -> LOW), not release
+    if (!reading)
+    {
+        displayRotation = (displayRotation == 0) ? 2 : 0;
+        prefs.putUChar("rot", displayRotation);
+        applyRotation();
+        Serial.printf("Screen rotation -> %u\n", displayRotation);
+    }
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -1167,8 +1237,19 @@ void setup()
     // Initialize LED - blue during startup
     setLed(0, 0, 50);
 
+    // BOOT button flips the screen; GPIO0 has a pull-up and reads LOW pressed
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+    // Open NVS before the display so the saved orientation applies to the
+    // splash screen too (the speed profile is loaded from it further down).
+    prefs.begin("kb", false);
+    displayRotation = prefs.getUChar("rot", 0);
+    if (displayRotation != 0 && displayRotation != 2)
+        displayRotation = 0;
+
     // Initialize display
     lcd.init();
+    lcd.setRotation(displayRotation);
     lcd.setBrightness(255);
     lcd.fillScreen(COLOR_BG);
 
@@ -1182,6 +1263,18 @@ void setup()
     lcd.setTextColor(COLOR_DIM);
     lcd.setCursor(5, 55);
     lcd.println("Starting...");
+
+    // USB identity: present as a Logitech keyboard.
+    //
+    // The -DUSB_VID/-DUSB_PID build flags never took effect — the esp32s3
+    // variant's pins_arduino.h redefines both AFTER the command line (96
+    // "redefined" warnings per build), so the Espressif 303A:1001 values won
+    // and the dongle enumerated as "USB JTAG/serial debug unit". Setting them
+    // at runtime before USB.begin() is what actually applies.
+    USB.VID(0x046D);
+    USB.PID(0xC31C);
+    USB.manufacturerName("Logitech");
+    USB.productName("USB Keyboard");
 
     // Initialize USB HID (Keyboard + Mouse)
     Keyboard.begin();
@@ -1229,8 +1322,8 @@ void setup()
     static TotalCharCallbacks totalCharCallbacks;
     pTotalCharacteristic->setCallbacks(&totalCharCallbacks);
 
-    // Load persisted speed profile (default Normal on first boot)
-    prefs.begin("kb", false);
+    // Load persisted speed profile (default Normal on first boot).
+    // prefs was already opened above, before the display init.
     uint8_t savedProfile = prefs.getUChar("prof", 1);
     applyProfile(savedProfile);
     pConfigCharacteristic->setValue(&savedProfile, 1);
@@ -1265,6 +1358,8 @@ void loop()
 {
     esp_task_wdt_reset();  // Feed watchdog every iteration
     unsigned long currentTime = millis();
+
+    handleButton();  // BOOT button: flip the screen 180 degrees
 
     // Handle BLE reconnection with exponential backoff
     if (!deviceConnected && oldDeviceConnected)
