@@ -1,0 +1,196 @@
+<title>MouseMover T5 Mockups</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: gallery of 960x540 T5 screens, each scaled to its column, dark then inverted */
+:root{
+  --page:#141414; --page-fg:#e8e8e8; --page-dim:#8a8a8a;
+  --font:'Inter Tight',system-ui,sans-serif; --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--page-fg);font-family:var(--font);margin:0;
+  padding-block:32px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1500px;margin:0 auto}
+h1{font-size:22px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--page-dim);font-size:13px;margin:0 0 28px;max-width:70ch}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,440px),1fr));gap:20px 18px}
+.cap{font-size:13px;color:var(--page-dim);margin-top:8px;display:flex;justify-content:space-between;gap:8px}
+.cap b{font-weight:500;color:var(--page-fg)}
+.frame{position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;border-radius:6px;background:#000;border:1px solid #2a2a2a}
+.frame.light{background:#fff}
+.scr{position:absolute;left:0;top:0;width:960px;height:540px;transform-origin:0 0;padding:24px;
+  font-family:var(--font);background:var(--bg);color:var(--fg);--hair:color-mix(in srgb,var(--fg) 14%,transparent)}
+.dark{--bg:#000;--fg:#fff}
+.light{--bg:#fff;--fg:#000}
+.scr svg{display:block}
+.left{position:absolute;left:24px;top:24px;width:380px;height:492px;border:2px solid var(--fg);border-radius:30px;padding:18px 20px}
+.left.dashed{border-style:dashed;border-width:1.5px}
+.brand{display:flex;justify-content:space-between;align-items:baseline;font-size:15px;font-weight:600}
+.brand i{font:400 10px var(--mono);opacity:.55;font-style:normal}
+.dial{position:absolute;left:40px;top:96px;width:300px;height:300px}
+.dial svg{position:absolute;inset:0}
+.ctr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:2px}
+.ctr .big{font-size:38px;font-weight:600;letter-spacing:-.02em;line-height:1}
+.ctr .big.two{font-size:32px;line-height:1.05}
+.ctr .small{font:400 11px var(--mono);opacity:.6;margin-top:6px}
+.ctr .lbl{font:400 10px var(--mono);opacity:.5;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.foot{position:absolute;left:0;right:0;bottom:16px;text-align:center;font:400 11px var(--mono);opacity:.55}
+.right{position:absolute;left:428px;top:24px;width:508px;height:492px}
+.top{display:flex;justify-content:space-between;align-items:center;height:40px}
+.time{font-size:30px;font-weight:500;letter-spacing:-.01em}
+.chips{display:flex;gap:8px}
+.chip{display:flex;align-items:center;gap:6px;border:1.5px solid var(--fg);border-radius:999px;height:26px;padding:0 11px;font-size:12px;font-weight:600}
+.chip.off{border-style:dashed;opacity:.45}
+.chip em{width:7px;height:7px;border-radius:2px;background:var(--fg);display:block}
+.chip.off em{background:none;border:1.5px solid var(--fg)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px;height:118px}
+.tile{position:relative;border-radius:18px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--fg) 34%,transparent),color-mix(in srgb,var(--fg) 8%,transparent));border:1px solid var(--hair)}
+.tile.hi{background:linear-gradient(135deg,color-mix(in srgb,var(--fg) 82%,transparent),color-mix(in srgb,var(--fg) 40%,transparent));color:var(--bg)}
+.tile .k{font:400 10px var(--mono);opacity:.7;text-transform:uppercase;letter-spacing:.06em}
+.tile .v{font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1}
+.tile .v small{font-size:16px;font-weight:500;opacity:.8;margin-left:2px}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;height:300px}
+.btn{position:relative;border-radius:18px;padding:16px 18px;border:1.5px solid var(--fg);overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;background:var(--bg);color:var(--fg)}
+.btn::after{content:"";position:absolute;inset:0;background-image:radial-gradient(currentColor 1.1px,transparent 1.6px);background-size:7px 7px;
+  -webkit-mask-image:linear-gradient(100deg,transparent 35%,#000);mask-image:linear-gradient(100deg,transparent 35%,#000);opacity:.9;pointer-events:none}
+.btn>*{position:relative;z-index:1}
+.btn svg{width:26px;height:26px}
+.btn .t{font-size:20px;font-weight:600;letter-spacing:-.01em;display:block}
+.btn .d{font:400 11px var(--mono);opacity:.7;display:block;margin-top:3px}
+.btn.pri{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.btn.pri::after{display:none}
+.btn.dis{opacity:.4;border-style:dashed}
+.btn.dis::after{display:none}
+.btn.sel{outline:2px solid var(--fg);outline-offset:3px}
+/* patterns screen */
+.p-head{position:absolute;left:24px;right:24px;top:20px;display:flex;justify-content:space-between;align-items:center;height:48px}
+.p-head h2{margin:0;font-size:34px;font-weight:600;letter-spacing:-.02em;display:flex;align-items:baseline;gap:12px}
+.p-head h2 small{font:400 11px var(--mono);opacity:.55;letter-spacing:0}
+.ptiles{position:absolute;left:24px;right:24px;top:84px;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.pt{position:relative;height:178px;border-radius:20px;padding:14px 16px;overflow:hidden;border:1px solid var(--hair);
+  background:linear-gradient(160deg,color-mix(in srgb,var(--fg) 34%,transparent),color-mix(in srgb,var(--fg) 7%,transparent));display:flex;flex-direction:column;justify-content:flex-end}
+.pt .n{position:absolute;left:14px;top:8px;font-size:46px;font-weight:500;color:transparent;-webkit-text-stroke:1.4px color-mix(in srgb,var(--fg) 55%,transparent);letter-spacing:-.02em}
+.pt svg{position:absolute;right:12px;top:12px;width:70px;height:70px;opacity:.9}
+.pt .t{font-size:18px;font-weight:600;position:relative}
+.pt .d{font:400 10.5px var(--mono);opacity:.65;position:relative;margin-top:2px}
+.pt.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.pt.on .n{-webkit-text-stroke-color:color-mix(in srgb,var(--bg) 55%,transparent)}
+.p-foot{position:absolute;left:24px;right:24px;bottom:24px;display:flex;justify-content:space-between;align-items:center}
+.nav{height:46px;border-radius:999px;background:var(--fg);color:var(--bg);display:flex;align-items:center;gap:8px;padding:0 22px;font-size:15px;font-weight:600}
+.nav svg{width:16px;height:16px}
+.dots{display:flex;align-items:center;gap:8px;font:400 12px var(--mono);opacity:.7}
+.dots i{display:block;width:26px;height:4px;border-radius:2px;background:var(--fg)}
+.dots .o{display:block;width:6px;height:6px;border-radius:3px;background:var(--fg);opacity:.4}
+.p-rows{position:absolute;left:24px;right:24px;top:282px;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+@media (prefers-reduced-motion:no-preference){.spin{animation:sp 6s linear infinite;transform-origin:150px 150px}@keyframes sp{to{transform:rotate(360deg)}}}
+</style>
+
+<div class="wrap">
+  <h1>MouseMover for liligo T5</h1>
+  <p class="sub">Six screens in the same mono dial language as KeyBridge, in dark and inverted. 960×540. The dial counts down to the next cursor nudge; the four buttons are Pause, Pattern, Interval and Flip 180.</p>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script>
+const I={
+  cur:'<path d="M6 3l13 8-5.5 1.5L11 18z" fill="currentColor"/>',
+  pause:'<rect x="7" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/>',
+  play:'<path d="M8 5l11 7-11 7z" fill="currentColor"/>',
+  pat:'<path d="M5 4h4v16H5zM10 6h9v12h-9z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+  bolt:'<path d="M13 3L5 13h6l-1 8 8-10h-6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+  flip:'<path d="M4 12a8 8 0 0 1 14-5M20 12a8 8 0 0 1-14 5M18 3v4h-4M6 21v-4h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  stop:'<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>',
+  wifi:'<path d="M3 9a13 13 0 0 1 18 0M6 13a8.5 8.5 0 0 1 12 0M9.5 16.5a4 4 0 0 1 5 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="19.5" r="1.4" fill="currentColor"/>',
+  check:'<path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  back:'<path d="M19 12H5M11 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
+  next:'<path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'
+};
+const svg=(p,vb='0 0 24 24')=>`<svg viewBox="${vb}">${p}</svg>`;
+
+/* dial: 24 radial segments; op(i) gives opacity */
+function dial(op,{r1=108,r2=140,w=10,fill=false}={}){
+  let s='';
+  for(let i=0;i<24;i++){
+    const a=(i/24)*2*Math.PI-Math.PI/2, c=Math.cos(a), d=Math.sin(a);
+    s+=`<line x1="${150+c*r1}" y1="${150+d*r1}" x2="${150+c*r2}" y2="${150+d*r2}" stroke="currentColor" stroke-width="${w}" stroke-linecap="butt" opacity="${op(i)}"/>`;
+  }
+  if(fill) s+=`<circle cx="150" cy="150" r="${r1-10}" fill="currentColor"/>`;
+  return `<svg viewBox="0 0 300 300" width="300" height="300" style="color:var(--fg)">${s}</svg>`;
+}
+const sweep=(p)=>i=>{const f=i/24; return f<p?1-(p-f)*0.5*0.9:0.16};
+const tile=(k,v,hi)=>`<div class="tile${hi?' hi':''}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+const btn=(ic,t,d,c='')=>`<div class="btn ${c}">${svg(ic)}<div><span class="t">${t}</span><span class="d">${d}</span></div></div>`;
+const chips=(mac=true)=>`<div class="chips"><span class="chip"><em></em>HID</span><span class="chip${mac?'':' off'}"><em></em>Mac</span></div>`;
+
+function screen({time,dialHTML,center,foot,dashed,stats,btns,mac=true}){
+  return `<div class="left${dashed?' dashed':''}">
+    <div class="brand">MouseMover<i>T5 · v1.0</i></div>
+    <div class="dial">${dialHTML}<div class="ctr">${center}</div></div>
+    <div class="foot">${foot}</div></div>
+  <div class="right"><div class="top"><span class="time">${time}</span>${chips(mac)}</div>
+    <div class="stats">${stats.join('')}</div><div class="btns">${btns.join('')}</div></div>`;
+}
+
+const S={
+  moving:()=>screen({time:'09:43',
+    dialHTML:dial(sweep(0.62)),
+    center:`<div style="width:34px;height:34px;margin-bottom:6px">${svg(I.cur)}</div><div class="big">Moving</div><div class="small">next nudge in 11s</div>`,
+    foot:'Circle · 40 px · every 30 s',
+    stats:[tile('Moves today','1,284',1),tile('Distance','86<small>m</small>'),tile('Awake','4h 12m')],
+    btns:[btn(I.pause,'Pause','Hold the cursor'),btn(I.pat,'Patterns','Circle'),btn(I.bolt,'Interval','Every 30 s'),btn(I.flip,'Flip','Rotate 180°')]}),
+  ready:()=>screen({time:'09:41',
+    dialHTML:dial(i=>0.18+0.62*((i%2)?0.6:1)*0.9),
+    center:`<div class="lbl">Status</div><div class="big">Ready</div><div class="small">last move 09:38</div>`,
+    foot:'Tap Start to keep the Mac awake',
+    stats:[tile('Moves today','1,284'),tile('Distance','86<small>m</small>'),tile('Awake','4h 12m')],
+    btns:[btn(I.play,'Start','Begin moving','pri'),btn(I.pat,'Patterns','Circle'),btn(I.bolt,'Interval','Every 30 s'),btn(I.flip,'Flip','Rotate 180°')]}),
+  hold:()=>screen({time:'09:41',dashed:true,
+    dialHTML:dial(i=>0.28),
+    center:`<div style="width:30px;height:30px;margin-bottom:4px">${svg(I.pause)}</div><div class="big">On hold</div><div class="small">since 09:28</div>`,
+    foot:'Cursor is yours until you resume',
+    stats:[tile('Pauses','2'),tile('Held for','13m'),tile('Moves today','1,284')],
+    btns:[btn(I.play,'Resume','Accelerate again','pri'),btn(I.pat,'Patterns','Circle'),btn(I.bolt,'Interval','Every 30 s'),btn(I.flip,'Flip','Rotate 180°')]}),
+  waiting:()=>screen({time:'09:41',mac:false,
+    dialHTML:`<g></g>`+dial(i=>i<2?1:(i<5?0.5:0.15)).replace('<svg ','<svg class="spin" '),
+    center:`<div style="width:34px;height:34px;margin-bottom:6px">${svg(I.wifi)}</div><div class="big two">Waiting<br>for Mac</div><div class="small">last seen 09:35</div>`,
+    foot:'Nudges resume when the Mac is back',
+    stats:[tile('Moves today','1,284'),tile('Reconnects','3'),tile('Awake','4h 12m')],
+    btns:[btn(I.pause,'Pause','Hold the cursor'),btn(I.pat,'Patterns','Needs Mac','dis'),btn(I.bolt,'Interval','Every 30 s'),btn(I.flip,'Flip','Rotate 180°')]}),
+  done:()=>screen({time:'11:00',
+    dialHTML:dial(i=>1,{fill:true,r1:118,r2:142,w:5}),
+    center:`<div style="width:38px;height:38px;margin-bottom:4px;color:var(--bg)">${svg(I.check)}</div><div class="big" style="color:var(--bg)">Done</div><div class="small" style="color:var(--bg);opacity:.7">timer ended 11:00</div>`,
+    foot:'Mouse is free · auto-stop after 2h',
+    stats:[tile('Moves','2,310',1),tile('Distance','154<small>m</small>'),tile('Awake','2h 00m')],
+    btns:[btn(I.play,'Restart','Another 2h','pri'),btn(I.pat,'Patterns','Circle'),btn(I.bolt,'Interval','Every 30 s'),btn(I.flip,'Flip','Rotate 180°')]})
+};
+
+const pats=[['Jiggle','2 px · subtle','M10 35h8l3-12 4 24 4-24 4 24 3-12h8'],
+['Circle','40 px · smooth','M35 12a23 23 0 1 0 .1 0'],
+['Square','60 px · corners','M12 12h46v46H12z'],
+['Figure 8','50 px · loop','M35 35c-12-18-26-14-26 0s14 18 26 0 26-18 26 0-14 18-26 0'],
+['Zigzag','80 px · sweep','M8 56l13-40 13 40 13-40 13 40'],
+['Random','jitter · natural','M10 50l14-18 10 10 14-26 12 22'],
+['Scroll','tiny wheel ticks','M35 10v18M26 20l9 8 9-8M35 60V42M26 50l9-8 9 8'],
+['Tap','nudge + shift key','M35 18v34M18 35h34']];
+function patterns(){
+  const t=pats.map((p,i)=>`<div class="pt${i==1?' on':''}"><span class="n">0${i+1}</span>${svg(`<path d="${p[2]}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`,'0 0 70 70')}<span class="t">${p[0]}</span><span class="d">${p[1]}</span></div>`).join('');
+  return `<div class="p-head"><h2>Patterns <small>Tap one to apply</small></h2><div style="display:flex;gap:14px;align-items:center">${chips()}<span class="time" style="font-size:20px">09:41</span></div></div>
+  <div class="ptiles" style="grid-template-rows:repeat(2,178px)">${t}</div>
+  <div class="p-foot"><div class="nav" style="background:none;color:var(--fg);border:1.5px solid var(--fg)">${svg(I.back)}Back</div><div class="dots"><i></i><span class="o"></span><span>1 / 1</span></div><div class="nav" style="opacity:.35">Next${svg(I.next)}</div></div>`;
+}
+/* second row positions */
+const order=[['moving','moving'],['ready','ready'],['hold','on hold'],['waiting','waiting for Mac'],['done','done'],['patterns','patterns']];
+const g=document.getElementById('grid');
+[['dark','Mono dial'],['light','Mono dial inverted']].forEach(([th,label])=>{
+  order.forEach(([k,name])=>{
+    const html=k=='patterns'?patterns():S[k]();
+    const d=document.createElement('div');
+    d.innerHTML=`<div class="frame ${th}"><div class="scr ${th}">${html}</div></div><div class="cap"><b>${label}: ${name}</b><span>960×540</span></div>`;
+    g.appendChild(d);
+  });
+});
+function fit(){document.querySelectorAll('.frame').forEach(f=>{f.firstElementChild.style.transform=`scale(${f.clientWidth/960})`})}
+addEventListener('resize',fit);fit();
+if('ResizeObserver' in window){const ro=new ResizeObserver(fit);ro.observe(g)}
+</script>
