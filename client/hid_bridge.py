@@ -90,7 +90,7 @@ CHAR_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa"
 CHAR_CONFIG_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ab"
 CHAR_TOTAL_UUID  = "beb5483e-36e1-4688-b7f5-ea07361b26ac"
 
-DEVICE_NAME = "KeyBridge Slate"  # the old dongle also advertises "KeyBridge"
+DEVICE_NAME = "KeyBridge"
 
 PROFILE_SLOW = 0
 PROFILE_NORMAL = 1

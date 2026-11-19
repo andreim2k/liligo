@@ -144,7 +144,7 @@ static void linkTask(void *) {
 }
 
 void linkBegin() {
-    BLEDevice::init("KeyBridge Slate");
+    BLEDevice::init("KeyBridge");
     BLEDevice::setMTU(517);
     BLEServer *server = BLEDevice::createServer();
     server->setCallbacks(new ServerCb());
