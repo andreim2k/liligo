@@ -20,6 +20,8 @@ void hwBegin() {
     digitalWrite(PIN_SD_CS, HIGH);
     pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
     pinMode(PIN_USER_BTN, INPUT_PULLUP);
+    pinMode(PIN_BL, OUTPUT);
+    lightApply();
 
     Wire.begin(PIN_SDA, PIN_SCL);
     for (uint8_t a = 1; a < 127; a++) {
@@ -91,3 +93,37 @@ bool touchRead(int16_t &x, int16_t &y) {
 }
 
 bool homeKeyPressed() { return homePending.exchange(false); }
+
+PowerInfo power;
+
+static bool i2cRead(uint8_t addr, uint8_t reg, uint8_t *buf, int n) {
+    Wire.beginTransmission(addr);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom((int)addr, n) != n) return false;
+    for (int i = 0; i < n; i++) buf[i] = Wire.read();
+    return true;
+}
+
+bool powerUpdate() {
+    PowerInfo p;
+    uint8_t b[2];
+    if (i2cRead(0x55, 0x2C, b, 2)) p.pct = min(100, (int)(b[0] | (b[1] << 8)));        // state of charge %
+    if (i2cRead(0x55, 0x08, b, 2)) p.mv = b[0] | (b[1] << 8);                            // battery mV
+    p.battery = p.mv > 2500 && p.mv < 5000;
+    if (i2cRead(0x6B, 0x0B, b, 1)) {                                                     // charger status
+        p.vbus = (b[0] & 0x04) != 0 || ((b[0] >> 5) & 7) != 0;                          // power good or VBUS_STAT
+        p.chg = (b[0] >> 3) & 3;
+    }
+    bool changed = p.battery != power.battery || p.vbus != power.vbus || p.chg != power.chg ||
+                   (p.battery && p.pct != power.pct);
+    power = p;
+    return changed;
+}
+
+// Factory levels for the front light: off, low, medium, bright.
+void lightApply() {
+    static const uint8_t LEVEL[4] = {0, 50, 100, 230};
+    analogWrite(PIN_BL, LEVEL[(uiStandby() ? standbyLight.load() : settings.light) & 3]);
+    LOG("light %d\n", settings.light);
+}

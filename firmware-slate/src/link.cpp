@@ -56,6 +56,17 @@ class ConfigCb : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *c) override {
         std::string v = c->getValue();
         if (v.empty()) return;
+        if (v.size() == 5 && (uint8_t)v[0] == 0xFE) {        // time sync: 0xFE + epoch (u32 LE), sent by the Mac on connect
+            const uint8_t *q = (const uint8_t *)v.data() + 1;
+            uint32_t epoch = q[0] | (q[1] << 8) | (q[2] << 16) | ((uint32_t)q[3] << 24);
+            if (epoch > 1700000000UL) {
+                struct timeval tv = {(time_t)epoch, 0};
+                settimeofday(&tv, nullptr);
+                rtcWriteFromSystem();
+                uiRequestRedraw();
+            }
+            return;
+        }
         uint8_t p = (uint8_t)v[0];
         settings.speed = p <= SPEED_FAST ? p : SPEED_FAST;
         storeSaveSettings();

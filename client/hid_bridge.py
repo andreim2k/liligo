@@ -185,10 +185,20 @@ class KeyBridgeClient:
             mtu = self.client.mtu_size
             self.chunk_size = mtu - 3  # MTU - 3 for ATT header
             print(f"Connected to {device.name} (MTU: {mtu}, chunk: {self.chunk_size})")
+            await self.sync_time()
             return True
         except Exception as e:
             print(f"Failed to connect: {e}")
             return False
+
+    async def sync_time(self):
+        """Send the Mac's clock (UTC epoch) so the Slate's RTC is always right."""
+        try:
+            await self.client.write_gatt_char(
+                CHAR_CONFIG_UUID, b"\xfe" + struct.pack("<I", int(time.time())), response=True
+            )
+        except Exception as e:
+            print(f"Time sync skipped: {e}")
 
     def _on_disconnect(self, client: BleakClient):
         """Handle disconnection."""

@@ -11,6 +11,7 @@
 #define PIN_SD_CS      12
 #define PIN_BOOT_BTN   0
 #define PIN_USER_BTN   48
+#define PIN_BL         11     // front light (PWM)
 
 #define SCREEN_W 960
 #define SCREEN_H 540
@@ -39,6 +40,7 @@ struct Settings {
     uint8_t pattern = PAT_ONEPX;
     uint8_t interval = INT_RANDOM;
     uint8_t refresh = REFRESH_5MIN;
+    uint8_t light = 0;          // front light level 0..3 (off, low, medium, bright)
 };
 extern Settings settings;
 
@@ -100,6 +102,20 @@ extern int prevResetReason;
 void hwBegin();
 bool touchRead(int16_t &x, int16_t &y);   // screen coordinates
 bool homeKeyPressed();                     // edge-triggered
+
+// Battery / charger (BQ27220 fuel gauge at 0x55, BQ25896 charger at 0x6B)
+struct PowerInfo {
+    bool battery = false;   // a battery is connected
+    int pct = 0;            // 0..100
+    int mv = 0;
+    bool vbus = false;      // USB power present
+    uint8_t chg = 0;        // 0 not charging, 1 pre-charge, 2 fast charge, 3 charge done
+};
+extern PowerInfo power;
+bool powerUpdate();         // true if what is shown would change
+bool uiStandby();                          // no USB data link: standby screen
+extern std::atomic<uint8_t> standbyLight;   // temporary front-light level in standby (0 = off)
+void lightApply();                         // front light from settings.light
 bool rtcValid();
 void rtcWriteFromSystem();
 

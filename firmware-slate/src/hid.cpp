@@ -157,9 +157,14 @@ static void moverMove() {
     case PAT_ZIGZAG: dist = runSteps(S_ZIGZAG, 4); break;
     case PAT_SCROLL: runSteps(S_SCROLL, 2); break;
     case PAT_RANDOM: {
-        int8_t dx = random(-3, 4), dy = random(-3, 4);
-        Step s[2] = {{dx, dy, 0}, {(int8_t)-dx, (int8_t)-dy, 0}};
-        dist = runSteps(s, 2);
+        // Visible wander: out 20..60 px in a random direction over 6 steps, then back.
+        float ang = random(0, 628) / 100.0f, len = random(20, 61) / 6.0f;
+        int8_t dx = (int8_t)lroundf(cosf(ang) * len), dy = (int8_t)lroundf(sinf(ang) * len);
+        if (!dx && !dy) dx = 8;
+        for (int i = 0; i < 6; i++) { Mouse.move(dx, dy, 0); delay(40); }
+        delay(250);                                          // linger so it can be seen
+        for (int i = 0; i < 6; i++) { Mouse.move(-dx, -dy, 0); delay(40); }
+        dist = (uint32_t)(abs(dx) + abs(dy)) * 12;
         break;
     }
     case PAT_TAP:
@@ -169,6 +174,7 @@ static void moverMove() {
         break;
     default: dist = runSteps(S_ONEPX, 2); break;
     }
+    LOG("mover: pattern %d dist %u\n", (int)settings.pattern, (unsigned)dist);
     stats.movesToday++;
     stats.moveDistPx += dist;
     lastMoveAt = millis();

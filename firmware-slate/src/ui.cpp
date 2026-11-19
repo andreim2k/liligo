@@ -1,6 +1,7 @@
 #include "app.h"
 #include <FastEPD.h>
 #include <time.h>
+#include <sys/time.h>
 extern "C" {
 #include <epdiy.h>
 #include <epd_highlevel.h>
@@ -22,9 +23,10 @@ static const uint8_t BG = 0, FG = 15;           // FastEPD 4-bit: 0 black .. 15 
 static const uint8_t G_BUTTON = FG;             // -> black buttons in the light theme
 static const uint8_t G_CARD = BG;               // -> white cards in the light theme
 
-enum Page : uint8_t { P_HOME, P_SNIPPETS, P_SPEED, P_MOVER, P_PATTERNS, P_INTERVAL, P_REFRESH };
+enum Page : uint8_t { P_HOME, P_SNIPPETS, P_SPEED, P_MOVER, P_PATTERNS, P_INTERVAL, P_REFRESH, P_SETTINGS };
 static Page page = P_MOVER;
-static Page beforeRefresh = P_MOVER;  // where Back from the Refresh page returns to  // like the dongle: mouse mover until something is sent
+static Page returnPage = P_MOVER, refreshReturn = P_MOVER;  // where Back returns to
+static uint32_t rebootArmedUntil = 0;  // like the dongle: mouse mover until something is sent
 static std::atomic<bool> redraw{true};
 static std::atomic<int> cleanReq{0};  // 1 = light clean, 2 = cascade
 static uint32_t lastTouchMs = 0, holdSince = 0, lastFullClean = 0;
@@ -212,7 +214,7 @@ static void fmtClock(char *out, size_t sz) {
 }
 
 // ---------------- icons (28 px box) ----------------
-enum Icon : uint8_t { I_PAUSE, I_PLAY, I_STOP, I_SNIP, I_BOLT, I_FLIP, I_MOUSE, I_THEME, I_SCREEN, I_WINDOW, I_PATTERN, I_TIMER, I_CHECK, I_WIFI, I_CLEAN };
+enum Icon : uint8_t { I_PAUSE, I_PLAY, I_STOP, I_SNIP, I_BOLT, I_FLIP, I_MOUSE, I_THEME, I_SCREEN, I_WINDOW, I_PATTERN, I_TIMER, I_CHECK, I_WIFI, I_CLEAN, I_SETTINGS };
 static void icon(Icon i, int x, int y, uint8_t c) {
     switch (i) {
     case I_PAUSE: epd.fillRect(x + 7, y + 4, 5, 20, c); epd.fillRect(x + 16, y + 4, 5, 20, c); break;
@@ -241,6 +243,9 @@ static void icon(Icon i, int x, int y, uint8_t c) {
         for (int t = 0; t < 3; t++) { epd.drawCircle(x + 14, y + 24, 20 - t, c); epd.drawCircle(x + 14, y + 24, 13 - t, c); }
         epd.fillRect(x - 8, y + 24, 44, 22, BG == c ? FG : BG); epd.fillCircle(x + 14, y + 22, 3, c); break;
     case I_CLEAN: for (int k = 0; k < 4; k++) epd.fillRect(x + 3, y + 4 + k * 6, 22, 3, c); break;
+    case I_SETTINGS:
+        for (int k = 0; k < 3; k++) { int yy = y + 4 + k * 10; epd.fillRect(x + 2, yy + 2, 24, 2, c); epd.fillRect(x + 5 + k * 6, yy, 6, 7, c); }
+        break;
     }
 }
 
@@ -252,7 +257,7 @@ static void addHit(int x, int y, int w, int h, uint8_t id) { if (nHits < 24) hit
 
 enum Action : uint8_t {
     A_NONE, A_HOLD, A_RESUME, A_STOP, A_SNIPPETS, A_SPEED, A_FLIP, A_MOVER, A_THEME, A_CAP_SCREEN, A_CAP_WINDOW,
-    A_BACK, A_CLOCK, A_KEYBRIDGE, A_MOVER_TOGGLE, A_PATTERNS, A_INTERVAL, A_START_NOW, A_CLEAN_NOW,
+    A_BACK, A_CLOCK, A_KEYBRIDGE, A_MOVER_TOGGLE, A_PATTERNS, A_INTERVAL, A_START_NOW, A_CLEAN_NOW, A_SETTINGS, A_REFRESH_PAGE, A_REBOOT,
     A_SNIP0 = 40, A_SPEED0 = 50, A_PAT0 = 60, A_INT0 = 70, A_REFR0 = 80
 };
 enum BtnStyle : uint8_t { B_NORMAL, B_SELECTED, B_DIM };
@@ -291,7 +296,7 @@ static PillState hidPill() {
     if (!usbMounted.load() || usbSuspended.load()) return PS_OFF;
     return phase.load() == Phase::Typing ? PS_ACTIVE : PS_IDLE;
 }
-static PillState macPill() { return macOnline() ? PS_ACTIVE : PS_IDLE; }
+static PillState macPill() { return macOnline() ? PS_ACTIVE : PS_OFF; }  // filled while the Mac app is connected
 static PillState moverPill() {
     switch (moverState()) {
     case MoverState::Active: return PS_ACTIVE;
@@ -305,13 +310,12 @@ static int topBar(int left, int right, bool clockAtLeft) {
     int r = right;
     r = pill(r, "Mover", moverPill());
     r = pill(r, "Mac", macPill());
-    r = pill(r, "HID", hidPill());
+    r = pill(r, "KeyBridge", hidPill());
     char clk[8];
     fmtClock(clk, sizeof clk);
     const int cw = 110;
     int cx = clockAtLeft ? left : r - 6 - cw;
     tbox(clk, cx, 22, cw, 46, clockAtLeft ? AL_L : AL_R, F_M, F_S, FG);
-    addHit(cx, 22, cw, 46, A_CLOCK);
     return cx;
 }
 
@@ -362,11 +366,47 @@ static void dialStackIcon(Icon ic, const char *title, const char *sub, const cha
     if (sub2) dialLine(sub2, top + 107, 20, F_XS, F_XS, c);
 }
 
+// USB plug, charging bolt, battery with 4 segments and percentage, right aligned.
+static void drawPower(int right, int cy) {
+    if (power.battery) {
+        char t[8];
+        snprintf(t, sizeof t, "%d%%", power.pct);
+        tbox(t, right - 64, cy - 10, 64, 20, AL_R, F_XS, F_XS, FG);   // room for "100%" without a cut
+        int bx = right - 64 - 6 - 40, by = cy - 9;
+        border(bx, by, 36, 18, 4, 2, FG);
+        epd.fillRect(bx + 36, by + 5, 4, 8, FG);
+        int segs = (power.pct + 24) / 25;                      // 1..4 (0 only when empty)
+        if (power.pct < 4) segs = 0;
+        for (int i = 0; i < segs; i++) epd.fillRect(bx + 4 + i * 8, by + 4, 7, 10, FG);
+        right = bx - 6;
+    }
+    if (power.chg == 1 || power.chg == 2) {                    // charging: bolt
+        int x = right - 12, y = cy - 9;
+        fillTri(x + 8, y, x, y + 10, x + 6, y + 10, FG);
+        fillTri(x + 4, y + 8, x + 11, y + 8, x + 2, y + 18, FG);
+        right = x - 6;
+    }
+    if (power.vbus && usbMounted.load() && !usbSuspended.load()) {  // USB data enumerated: two arrows
+        int x = right - 20, y = cy - 8;
+        epd.fillRect(x, y + 2, 16, 2, FG);                     // shaft to the right
+        fillTri(x + 16, y + 3, x + 11, y - 1, x + 11, y + 7, FG);
+        epd.fillRect(x + 4, y + 11, 16, 2, FG);                // shaft to the left
+        fillTri(x + 4, y + 12, x + 9, y + 8, x + 9, y + 16, FG);
+    } else if (power.vbus) {                                   // charger only, no data: plug
+        int x = right - 16, y = cy - 9;
+        epd.fillRect(x + 3, y, 3, 5, FG);
+        epd.fillRect(x + 10, y, 3, 5, FG);
+        epd.fillRoundRect(x + 1, y + 5, 14, 8, 2, FG);
+        epd.fillRect(x + 6, y + 13, 4, 5, FG);
+    }
+}
+
 static void leftCard(bool dashed, const char *footer) {
     if (dashed) dashedBorder(22, 22, 392, 496, 26, FG); else border(22, 22, 392, 496, 26, 2, FG);
-    tbox("KeyBridge", 46, 32, 170, 31, AL_L, F_S, F_XS, FG);
-    tbox("corp-laptop", 226, 37, 164, 20, AL_R, F_XS, F_XS, FG);
+    tbox("T5 S3 Pro", 46, 32, 220, 31, AL_L, F_S, F_XS, FG);
+    drawPower(390, 47);
     tbox(footer, 42, 470, 352, 22, AL_C, F_XS, F_XS, FG);
+    tbox("© 2026 TechWare", 42, 494, 352, 20, AL_C, F_XS, F_XS, FG);
 }
 
 static void pillButton(int x, int y, int w, const char *label, Icon ic, bool right, uint8_t id) {
@@ -407,8 +447,8 @@ static const char *REFR_NAMES[] = {"Invisible", "Night only", "Off", "5 min"};
 static const char *REFR_SUBS[] = {"", "Deep clean at 03:00 only", "By hand only, may ghost", "Full clean every 5 min if needed, and at 03:00"};
 static const uint8_t REFR_ORDER[] = {REFRESH_5MIN, REFRESH_NIGHTLY, REFRESH_OFF};
 
-// Three rows of buttons fill the 310 px under the stats: (310 - 2 * 14) / 3 = 94.
-static const int COLX0 = 432, BW = 246, BH = 94, COLX1 = 432 + 246 + 14;
+// Four rows of buttons fill the space under the stats: (518 - 208 - 3 * 14) / 4 = 67.
+static const int COLX0 = 432, BW = 246, BH = 67, COLX1 = 432 + 246 + 14;
 static int rowY(int i) { return 208 + i * (BH + 14); }
 static const int SW = (506 - 28) / 3;
 
@@ -473,6 +513,7 @@ static void drawHome() {
     const char *ms = typing ? "Waits for typing" : moverState() == MoverState::Paused ? "Paused" : moverState() == MoverState::Armed ? "Resumes shortly" : PAT_NAMES[settings.pattern];
     button(COLX0, rowY(2), BW, BH, I_MOUSE, "Mover", ms, norm, typing ? 0 : A_MOVER);
     button(COLX1, rowY(2), BW, BH, I_THEME, "Theme", "Flip colors", norm, typing ? 0 : A_THEME);
+    button(COLX0, rowY(3), COLX1 + BW - COLX0, BH, I_SETTINGS, "Settings", "Refresh, restart", norm, typing ? 0 : A_SETTINGS);
 }
 
 static void drawMover() {
@@ -491,7 +532,7 @@ static void drawMover() {
         snprintf(l1, sizeof l1, "%lus", (unsigned long)left);
         dialStack3("Armed, starts in", l1, "after typing", FG);
     } else {
-        leftCard(false, "Screen stays awake while idle");
+        leftCard(false, "");
         int32_t left = (int32_t)(nextMoveAt.load() - now);
         if (left < 0) left = 0;
         uint32_t span = max<uint32_t>(1000, nextMoveAt.load() - lastMoveAt.load());
@@ -519,6 +560,7 @@ static void drawMover() {
     button(COLX1, rowY(1), BW, BH, I_FLIP, "Flip", "Rotate 180", B_NORMAL, A_FLIP);
     button(COLX0, rowY(2), BW, BH, I_SNIP, "KeyBridge", settings.hold ? "On hold" : "Hold and snippets", B_NORMAL, A_KEYBRIDGE);
     button(COLX1, rowY(2), BW, BH, I_THEME, "Theme", "Flip colors", B_NORMAL, A_THEME);
+    button(COLX0, rowY(3), COLX1 + BW - COLX0, BH, I_SETTINGS, "Settings", "Refresh, restart", B_NORMAL, A_SETTINGS);
 }
 
 // Picker card: title 47 px box, subtitle up to two 20 px lines, optional bar meter.
@@ -610,6 +652,85 @@ static void drawRefresh() {
     tbox("Clean now: deep clean with one flash", 210, 476, 938 - 230 - 18 - 210, 20, AL_C, F_XS, F_XS, FG);
 }
 
+static void drawSettings() {
+    pageHeader("Settings", "Refresh and restart");
+    bool armed = millis() < rebootArmedUntil;
+    button(22, 110, 448, 120, I_CLEAN, "Refresh", "How often the screen is cleaned", B_NORMAL, A_REFRESH_PAGE);
+    if (armed) button(22, 250, 448, 120, I_FLIP, "Tap again to restart", "Restarts the board now", B_SELECTED, A_REBOOT);
+    else button(22, 250, 448, 120, I_FLIP, "Reboot", "Tap twice to restart the board", B_NORMAL, A_REBOOT);
+    pillButton(22, 456, 170, "Back", I_PLAY, false, A_BACK);
+}
+
+// No USB data link (unplugged, charger only, or the laptop is asleep): quiet standby screen.
+// VBUS from the charger chip is what notices an unplugged cable (no USB event fires for that).
+std::atomic<uint8_t> standbyLight{0};
+bool uiStandby();
+static bool standbyNow() { return !power.vbus || !usbMounted.load() || usbSuspended.load(); }
+
+bool uiStandby() { return standbyNow(); }
+
+static void standbyStat(int cx, const char *label, const char *value) {
+    tbox(label, cx - 110, 368, 220, 20, AL_C, F_XS, F_XS, FG);
+    tbox(value, cx - 110, 392, 220, 34, AL_C, F_M, F_XS, FG);
+}
+
+// Big seven-segment digit: segments a..g as bits 0..6. c < 0 draws a dash (time not set).
+static void segDigit(int x, int y, int c) {
+    static const uint8_t SEG[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
+    const int W = 130, H = 210, T = 24, ym = y + (H - T) / 2;
+    uint8_t m = c < 0 ? 0x40 : SEG[c];
+    if (m & 0x01) epd.fillRoundRect(x + 3, y, W - 6, T, T / 2, FG);                    // a
+    if (m & 0x02) epd.fillRoundRect(x + W - T, y + 3, T, ym - y + T - 6, T / 2, FG);   // b
+    if (m & 0x04) epd.fillRoundRect(x + W - T, ym + 3, T, y + H - ym - 6, T / 2, FG);  // c
+    if (m & 0x08) epd.fillRoundRect(x + 3, y + H - T, W - 6, T, T / 2, FG);            // d
+    if (m & 0x10) epd.fillRoundRect(x, ym + 3, T, y + H - ym - 6, T / 2, FG);          // e
+    if (m & 0x20) epd.fillRoundRect(x, y + 3, T, ym - y + T - 6, T / 2, FG);           // f
+    if (m & 0x40) epd.fillRoundRect(x + 3, ym, W - 6, T, T / 2, FG);                   // g
+}
+
+static void drawStandby() {
+    dashedBorder(22, 22, 916, 496, 26, FG);
+    tbox("T5 S3 Pro", 46, 32, 220, 31, AL_L, F_S, F_XS, FG);
+    drawPower(914, 47);
+    border(405, 30, 150, 34, 17, 2, FG);                       // status chip
+    tbox("STANDBY", 415, 36, 130, 22, AL_C, F_XS, F_XS, FG);
+
+    // hero clock: HH:MM in 210 px segments, centred (4 x 130 + 18 + 18 + 70 = 626 wide)
+    int h = -1, m = -1;
+    char date[40] = "Time not set";
+    if (rtcValid()) {
+        time_t now = time(nullptr);
+        struct tm t;
+        localtime_r(&now, &t);
+        h = t.tm_hour; m = t.tm_min;
+        strftime(date, sizeof date, "%A, %d %B %Y", &t);
+    }
+    const int x0 = 167, y0 = 84;
+    segDigit(x0, y0, h < 0 ? -1 : h / 10);
+    segDigit(x0 + 148, y0, h < 0 ? -1 : h % 10);
+    epd.fillRoundRect(x0 + 278 + 23, y0 + 62, 24, 24, 6, FG);  // colon
+    epd.fillRoundRect(x0 + 278 + 23, y0 + 124, 24, 24, 6, FG);
+    segDigit(x0 + 348, y0, m < 0 ? -1 : m / 10);
+    segDigit(x0 + 348 + 148, y0, m < 0 ? -1 : m % 10);
+    tbox(date, 180, 304, 600, 40, AL_C, F_L, F_M, FG);
+
+    epd.fillRect(120, 356, 720, 2, FG);                        // divider
+
+    const char *usb = power.vbus ? "Power only" : "Not connected";
+    const char *bat = power.chg == 1 || power.chg == 2 ? "Charging" : (power.vbus ? "Full" : "On battery");
+    char pct[12];
+    snprintf(pct, sizeof pct, "%d%%", power.pct);
+    standbyStat(240, "USB", usb);
+    standbyStat(480, "BATTERY", power.battery ? pct : "--");
+    standbyStat(720, "STATUS", bat);
+    epd.fillRect(360, 372, 2, 54, FG);                         // column rules
+    epd.fillRect(600, 372, 2, 54, FG);
+
+    tbox(usbMounted.load() && usbSuspended.load() ? "Computer asleep. Mover paused" : "Mover paused until USB connects",
+         180, 450, 600, 24, AL_C, F_XS, F_XS, FG);
+    tbox("© 2026 TechWare", 42, 494, 876, 20, AL_C, F_XS, F_XS, FG);
+}
+
 static void render() {
     crumb("r");
     nHits = 0;
@@ -617,6 +738,7 @@ static void render() {
     // A send always takes over the screen with its progress, then hands back.
     Phase ph = phase.load();
     if (ph == Phase::Typing || ph == Phase::Sent) { drawHome(); return; }
+    if (standbyNow()) { drawStandby(); return; }
     switch (page) {
     case P_SNIPPETS: drawSnippets(); break;
     case P_SPEED: drawSpeed(); break;
@@ -624,6 +746,7 @@ static void render() {
     case P_PATTERNS: drawPatterns(); break;
     case P_INTERVAL: drawInterval(); break;
     case P_REFRESH: drawRefresh(); break;
+    case P_SETTINGS: drawSettings(); break;
     default: drawHome(); break;
     }
 }
@@ -870,8 +993,7 @@ static void act(uint8_t id) {
     case A_THEME: settings.dark = !settings.dark; storeSaveSettings(); break;
     case A_CAP_SCREEN: hidCapture(false); break;
     case A_CAP_WINDOW: hidCapture(true); break;
-    case A_BACK: go(page == P_REFRESH ? beforeRefresh : (page == P_PATTERNS || page == P_INTERVAL) ? P_MOVER : P_HOME); break;
-    case A_CLOCK: if (page != P_REFRESH) { beforeRefresh = page; go(P_REFRESH); } break;
+    case A_BACK: go(page == P_REFRESH ? refreshReturn : page == P_SETTINGS ? returnPage : (page == P_PATTERNS || page == P_INTERVAL) ? P_MOVER : P_HOME); break;
     case A_KEYBRIDGE: go(P_HOME); break;
     case A_MOVER_TOGGLE: settings.moverOn = !settings.moverOn; storeSaveSettings(); moverResetSchedule(); break;
     case A_PATTERNS: go(P_PATTERNS); break;
@@ -879,6 +1001,12 @@ static void act(uint8_t id) {
     case A_START_NOW: moverStartNow(); break;
     // the touch chip can re-report the same tap after the 6 s clean: one clean per tap
     case A_CLEAN_NOW: if (millis() - lastFullClean > 3000) cleanReq = 2; break;
+    case A_SETTINGS: returnPage = page; go(P_SETTINGS); break;
+    case A_REFRESH_PAGE: refreshReturn = page; go(P_REFRESH); break;
+    case A_REBOOT:
+        if (millis() < rebootArmedUntil) { storeSaveStats(); LOG("reboot\n"); delay(200); ESP.restart(); }
+        rebootArmedUntil = millis() + 4000;
+        break;
     default:
         if (id >= A_SNIP0 && id < A_SNIP0 + SNIPPET_COUNT) { hidTypeSnippet(id - A_SNIP0); go(P_MOVER); }
         else if (id >= A_SPEED0 && id < A_SPEED0 + 3) { settings.speed = id - A_SPEED0; storeSaveSettings(); go(P_HOME); }
@@ -905,7 +1033,15 @@ static void pollInput() {
         if (hit >= 0) act(hit);
     }
     down = pressed;
-    if (homeKeyPressed()) { go(P_MOVER); redraw = true; lastTouchMs = millis(); }
+    if (homeKeyPressed()) {  // round key: next front-light level
+        if (standbyNow()) standbyLight = (standbyLight + 1) % 4;   // standby: temporary, never saved
+        else {
+            settings.light = (settings.light + 1) % 4;
+            storeSaveSettings();
+        }
+        lightApply();
+        lastTouchMs = millis();
+    }
 
     // BOOT key flips the screen; IO48 (side key) goes home.
     static uint32_t bootDown = 0, userDown = 0;
@@ -943,6 +1079,18 @@ static void uiTask(void *) {
         if (settings.hold && !holdSince) holdSince = now;
         if (!settings.hold) holdSince = 0;
         if (page != P_MOVER && !settings.hold && now - lastTouchMs > 90000) { page = P_MOVER; redraw = true; }
+        static uint32_t lastPower = 0;
+        static bool wasStandby = true;                         // light is off in standby, back to the saved level after
+        if (standbyNow() != wasStandby) {
+            wasStandby = standbyNow();
+            standbyLight = 0;
+            lightApply();
+        }
+        if (now - lastPower > 2000 || !lastPower) {          // every 2 s, in this task (shares the I2C bus)
+            lastPower = now;
+            if (powerUpdate()) redraw = true;
+            LOG("power: batt=%d %d%% %dmV vbus=%d chg=%d\n", power.battery, power.pct, power.mv, power.vbus, power.chg);
+        }
         static Phase lastPhase = Phase::Idle;
         Phase ph = phase.load();
         if (ph != lastPhase) {
@@ -967,6 +1115,25 @@ static void uiTask(void *) {
             }
             switch (c) {
             case 'D': dumpFrame(); break;
+            case 'T': {  // T<unix seconds>\n : set the clock (UTC) and the RTC chip
+                char buf[16]; int n = 0; uint32_t t0 = millis();
+                while (n < 15 && millis() - t0 < 500) {
+                    int ch = DebugSerial.read();
+                    if (ch < 0) { vTaskDelay(1); continue; }
+                    if (ch == '\n') break;
+                    buf[n++] = (char)ch;
+                }
+                buf[n] = 0;
+                long epoch = atol(buf);
+                if (epoch > 1700000000L) {
+                    struct timeval tv = {epoch, 0};
+                    settimeofday(&tv, nullptr);
+                    rtcWriteFromSystem();
+                    LOG("clock set to %ld\n", epoch);
+                    redraw = true;
+                }
+                break;
+            }
             case 'C': cleanReq = 2; break;
             case 'X': cleanReq = 3; break;
             case 'Z': cleanReq = 9; break;
@@ -1009,7 +1176,7 @@ static void uiTask(void *) {
         if (redraw.exchange(false)) {
             bool full = false;
             Phase vp = phase.load();
-            int view = vp == Phase::Typing ? 100 : vp == Phase::Sent ? 101 : (int)page;
+            int view = vp == Phase::Typing ? 100 : vp == Phase::Sent ? 101 : standbyNow() ? 102 : (int)page;
             if (view != shownView) {
                 shownView = view;
                 full = true;

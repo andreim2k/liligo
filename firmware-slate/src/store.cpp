@@ -27,6 +27,7 @@ void storeBegin() {
     settings.pattern = prefs.getUChar("pat", PAT_ONEPX) % PAT_COUNT;
     settings.interval = prefs.getUChar("int", INT_RANDOM) % INT_COUNT;
     settings.refresh = prefs.getUChar("refr2", REFRESH_5MIN) % 4;
+    settings.light = prefs.getUChar("light", 0) % 4;
     prefs.getBytes("stats", &stats, sizeof(stats));
     for (int i = 0; i < SNIPPET_COUNT; i++) {
         char k[4];
@@ -48,6 +49,7 @@ void storeSaveSettings() {
     prefs.putUChar("pat", settings.pattern);
     prefs.putUChar("int", settings.interval);
     prefs.putUChar("refr2", settings.refresh);
+    prefs.putUChar("light", settings.light);
 }
 
 void storeSaveStats() {
