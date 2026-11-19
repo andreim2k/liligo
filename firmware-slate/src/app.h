@@ -80,6 +80,8 @@ size_t hidEnqueue(const char *data, size_t len, bool startSession, uint32_t tota
 size_t hidFree();
 size_t hidQueued();
 void hidStop();
+bool hidAborting();                         // true for ~1.2 s after Stop: stale chunks from the Mac are dropped
+void hidClearAbort();
 void hidCapture(bool window);
 void hidRawKey(uint8_t mods, uint8_t code);
 bool hidTypeSnippet(int i);

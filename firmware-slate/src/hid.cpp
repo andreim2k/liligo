@@ -3,6 +3,7 @@
 #include <USBHIDKeyboard.h>
 #include <USBHIDMouse.h>
 #include <esp_heap_caps.h>
+#include "tusb.h"
 
 USBHIDKeyboard Keyboard;
 USBHIDMouse Mouse;
@@ -60,8 +61,30 @@ size_t hidEnqueue(const char *data, size_t len, bool startSession, uint32_t tota
     return added;
 }
 
+static std::atomic<uint32_t> abortUntil{0};
+bool hidAborting() { return abortUntil.load() && (int32_t)(abortUntil.load() - millis()) > 0; }
+void hidClearAbort() { abortUntil = 0; }
+
 void hidStop() {
+    abortUntil = millis() + 1200;   // the Mac is told to abort; leftovers are dropped meanwhile
     stopReq = true;
+}
+
+static uint32_t typeFails = 0, typeWaits = 0, typeWaitMs = 0;
+
+// The USB HID layer silently drops a report when the previous one has not completed
+// ("not ready"), and the e-paper drive threads (highest priority, both cores) can stall the
+// USB task for hundreds of ms. So never send before the endpoint is ready.
+static bool hidWait(uint32_t timeoutMs) {
+    if (tud_hid_n_ready(0)) return true;
+    uint32_t t0 = millis();
+    typeWaits++;
+    while (!tud_hid_n_ready(0)) {
+        if (millis() - t0 > timeoutMs) { typeWaitMs += millis() - t0; return false; }
+        delay(1);
+    }
+    typeWaitMs += millis() - t0;
+    return true;
 }
 
 static void typeChar(char c) {
@@ -71,8 +94,10 @@ static void typeChar(char c) {
     case SPEED_FAST: interval = 2; hold = 2; gap = 0; break;
     default: break;
     }
+    if (!hidWait(500)) typeFails++;
     Keyboard.press(c);
     if (hold) delay(hold);
+    if (!hidWait(500)) typeFails++;
     Keyboard.releaseAll();
     if (gap) delay(gap);
     if (interval > hold + gap) delay(interval - hold - gap);
@@ -221,6 +246,8 @@ static void typingTask(void *) {
                 sentChars = pasteTyped.load();
                 sentMs = millis() - sessionStart;
                 sentAt = millis();
+                LOG("send done: %u chars in %u ms, usb-not-ready waits %u (%u ms), gave up %u\n", (unsigned)sentChars.load(), (unsigned)sentMs.load(), (unsigned)typeWaits, (unsigned)typeWaitMs, (unsigned)typeFails);
+                typeFails = typeWaits = typeWaitMs = 0;
                 phase = Phase::Sent;
                 moverArmedUntil = millis() + ARM_DELAY_MS;
                 storeSaveStats();

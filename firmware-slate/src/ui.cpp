@@ -499,21 +499,19 @@ static void drawHome() {
         stat(COLX0, 86, SW, 104, "Typed today", a); stat(COLX0 + SW + 14, 86, SW, 104, "Sends", b); stat(COLX0 + 2 * (SW + 14), 86, SW, 104, "Uptime", c);
     }
 
+    // KeyBridge is driven from the Mac (speed, snippets, hold live there): the board keeps only
+    // what is local to it.
     bool typing = ph == Phase::Typing;
     BtnStyle norm = typing ? B_DIM : B_NORMAL;
-    if (typing) button(COLX0, rowY(0), BW, BH, I_STOP, "Stop", "Cancel this send", B_SELECTED, A_STOP);
-    else if (hold) button(COLX0, rowY(0), BW, BH, I_PLAY, "Resume", "Accept sends again", B_SELECTED, A_RESUME);
-    else button(COLX0, rowY(0), BW, BH, I_PAUSE, "Hold", "Pause sends", B_NORMAL, A_HOLD);
-    int saved = 0;
-    for (int i = 0; i < SNIPPET_COUNT; i++) if (snippets[i].len) saved++;
-    snprintf(l1, sizeof l1, hold ? "Still available" : "%d saved", saved);
-    button(COLX1, rowY(0), BW, BH, I_SNIP, "Snippets", l1, norm, typing ? 0 : A_SNIPPETS);
-    button(COLX0, rowY(1), BW, BH, I_BOLT, "Speed", SPEED_NAMES[settings.speed], norm, typing ? 0 : A_SPEED);
-    button(COLX1, rowY(1), BW, BH, I_FLIP, "Flip", "Rotate 180", norm, typing ? 0 : A_FLIP);
+    const int FULL = COLX1 + BW - COLX0;
     const char *ms = typing ? "Waits for typing" : moverState() == MoverState::Paused ? "Paused" : moverState() == MoverState::Armed ? "Resumes shortly" : PAT_NAMES[settings.pattern];
-    button(COLX0, rowY(2), BW, BH, I_MOUSE, "Mover", ms, norm, typing ? 0 : A_MOVER);
-    button(COLX1, rowY(2), BW, BH, I_THEME, "Theme", "Flip colors", norm, typing ? 0 : A_THEME);
-    button(COLX0, rowY(3), COLX1 + BW - COLX0, BH, I_SETTINGS, "Settings", "Refresh, restart", norm, typing ? 0 : A_SETTINGS);
+    int r = 0;
+    if (typing) button(COLX0, rowY(r++), FULL, BH, I_STOP, "Stop", "Cancel this send", B_SELECTED, A_STOP);
+    button(COLX0, rowY(r++), FULL, BH, I_MOUSE, "Mover", ms, norm, typing ? 0 : A_MOVER);
+    if (hold && !typing) button(COLX0, rowY(r++), FULL, BH, I_PLAY, "Resume", "Accept sends again", B_SELECTED, A_RESUME);
+    button(COLX0, rowY(r), BW, BH, I_FLIP, "Flip", "Rotate 180", norm, typing ? 0 : A_FLIP);
+    button(COLX1, rowY(r++), BW, BH, I_THEME, "Theme", "Flip colors", norm, typing ? 0 : A_THEME);
+    button(COLX0, rowY(r), FULL, BH, I_SETTINGS, "Settings", "Refresh, restart", norm, typing ? 0 : A_SETTINGS);
 }
 
 static void drawMover() {
@@ -551,16 +549,16 @@ static void drawMover() {
     else snprintf(b, sizeof b, "%.0f km", m / 1000);
     fmtDur((now - bootMs) / 1000, c, sizeof c);
     stat(COLX0, 86, SW, 104, "Moves today", a); stat(COLX0 + SW + 14, 86, SW, 104, "Distance", b); stat(COLX0 + 2 * (SW + 14), 86, SW, 104, "Awake", c);
-    if (ms == MoverState::Paused) button(COLX0, rowY(0), BW, BH, I_PLAY, "Resume", "Keep awake again", B_SELECTED, A_MOVER_TOGGLE);
-    else if (ms == MoverState::Armed) button(COLX0, rowY(0), BW, BH, I_PLAY, "Start now", "Skip the wait", B_NORMAL, A_START_NOW);
-    else button(COLX0, rowY(0), BW, BH, I_PAUSE, "Pause", "Stop moving", B_NORMAL, A_MOVER_TOGGLE);
-    button(COLX1, rowY(0), BW, BH, I_PATTERN, "Pattern", PAT_NAMES[settings.pattern], B_NORMAL, A_PATTERNS);
+    button(COLX0, rowY(0), COLX1 + BW - COLX0, BH, I_SNIP, "KeyBridge", settings.hold ? "On hold" : "Types what the Mac sends", B_NORMAL, A_KEYBRIDGE);
+    if (ms == MoverState::Paused) button(COLX0, rowY(1), BW, BH, I_PLAY, "Resume", "Keep awake again", B_SELECTED, A_MOVER_TOGGLE);
+    else if (ms == MoverState::Armed) button(COLX0, rowY(1), BW, BH, I_PLAY, "Start now", "Skip the wait", B_NORMAL, A_START_NOW);
+    else button(COLX0, rowY(1), BW, BH, I_PAUSE, "Pause", "Stop moving", B_NORMAL, A_MOVER_TOGGLE);
+    button(COLX1, rowY(1), BW, BH, I_PATTERN, "Pattern", PAT_NAMES[settings.pattern], B_NORMAL, A_PATTERNS);
     snprintf(l1, sizeof l1, "%s%s", intName(settings.interval), settings.interval == INT_RANDOM ? " 1-30 s" : "");
-    button(COLX0, rowY(1), BW, BH, I_TIMER, "Interval", l1, B_NORMAL, A_INTERVAL);
-    button(COLX1, rowY(1), BW, BH, I_FLIP, "Flip", "Rotate 180", B_NORMAL, A_FLIP);
-    button(COLX0, rowY(2), BW, BH, I_SNIP, "KeyBridge", settings.hold ? "On hold" : "Hold and snippets", B_NORMAL, A_KEYBRIDGE);
-    button(COLX1, rowY(2), BW, BH, I_THEME, "Theme", "Flip colors", B_NORMAL, A_THEME);
-    button(COLX0, rowY(3), COLX1 + BW - COLX0, BH, I_SETTINGS, "Settings", "Refresh, restart", B_NORMAL, A_SETTINGS);
+    button(COLX0, rowY(2), BW, BH, I_TIMER, "Interval", l1, B_NORMAL, A_INTERVAL);
+    button(COLX1, rowY(2), BW, BH, I_FLIP, "Flip", "Rotate 180", B_NORMAL, A_FLIP);
+    button(COLX0, rowY(3), BW, BH, I_THEME, "Theme", "Flip colors", B_NORMAL, A_THEME);
+    button(COLX1, rowY(3), BW, BH, I_SETTINGS, "Settings", "Refresh, restart", B_NORMAL, A_SETTINGS);
 }
 
 // Picker card: title 47 px box, subtitle up to two 20 px lines, optional bar meter.
@@ -1132,6 +1130,11 @@ static void uiTask(void *) {
                     LOG("clock set to %ld\n", epoch);
                     redraw = true;
                 }
+                break;
+            }
+            case 'E': {  // E: enqueue "This is short text" like a Bluetooth send (no Bluetooth involved)
+                static const char t[] = "This is short text";
+                hidEnqueue(t, sizeof t - 1, true, 0);
                 break;
             }
             case 'C': cleanReq = 2; break;

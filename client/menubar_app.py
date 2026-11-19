@@ -44,7 +44,7 @@ CHAR_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa"
 CHAR_CONFIG_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ab"
 CHAR_TOTAL_UUID  = "beb5483e-36e1-4688-b7f5-ea07361b26ac"
 
-DEVICE_NAME = "KeyBridge"
+DEVICE_NAME = "KeyBridge Slate"  # the old dongle also advertises "KeyBridge"
 
 PROFILE_SLOW = 0
 PROFILE_NORMAL = 1
@@ -384,6 +384,7 @@ class KeyBridgeDelegate(NSObject):
                 return
             client = BleakClient(device)
             await asyncio.wait_for(client.connect(), timeout=10.0)
+            debug_log("connected", f"{time.monotonic() - t_start:.1f}s")
             await client.write_gatt_char(
                 CHAR_CONFIG_UUID, bytes([profile_id, 0x01]), response=True
             )
@@ -401,7 +402,9 @@ class KeyBridgeDelegate(NSObject):
 
     def sendClipboard_(self, sender):
         """Send clipboard content to BLE device."""
+        debug_log("click/hotkey", f"sending={self.sending}")
         if self.sending:
+            debug_log("IGNORED", "a send is still in progress")
             return
 
         clipboard = get_clipboard()
@@ -431,8 +434,11 @@ class KeyBridgeDelegate(NSObject):
     async def _send_clipboard_flow(self, text):
         """Connect → send chunks with proven flow control → wait for completion → disconnect."""
         client = None
+        t_start = time.monotonic()
+        debug_log("flow start", len(text))
         try:
             device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=10.0)
+            debug_log("scanned", f"{time.monotonic() - t_start:.1f}s found={device is not None} {getattr(device, 'name', None)} {getattr(device, 'address', None)}")
             if device is None:
                 await asyncio.sleep(2)
                 device = await BleakScanner.find_device_by_name(
@@ -451,6 +457,24 @@ class KeyBridgeDelegate(NSObject):
             mtu = client.mtu_size
             chunk_size = mtu - 3
 
+            # Hotkey trigger: the board types as a keyboard on the target. If Ctrl/Cmd are
+            # still physically held, macOS reads the first characters as shortcuts. Wait.
+            for _ in range(40):  # up to 4 s
+                if not (self.ctrl_pressed or self.cmd_pressed):
+                    break
+                await asyncio.sleep(0.1)
+
+            # Keep the board's clock right (it stores it on its RTC chip).
+            try:
+                await asyncio.wait_for(
+                    client.write_gatt_char(
+                        CHAR_CONFIG_UUID, b"\xfe" + struct.pack("<I", int(time.time())), response=True
+                    ),
+                    timeout=3.0,
+                )
+            except Exception as e:
+                print(f"[TIME] sync skipped: {e}")
+
             self._set_title("⌨️📤")
             text = convert_to_ascii(text)
             encoded = text.encode("utf-8")
@@ -468,16 +492,25 @@ class KeyBridgeDelegate(NSObject):
             except Exception as e:
                 print(f"[TOTAL] Failed to write total chars: {e}")
 
+            self._aborted = False
+            debug_log("total written", total_chars)
             await self._send_chunks(client, encoded, chunk_size)
+            debug_log("chunks sent", f"{time.monotonic() - t_start:.1f}s aborted={self._aborted}")
+            if self._aborted:
+                send_notification("KeyBridge", "Cancelled", "Stopped on the board")
+                return
 
             self._set_title("⌨️⏳")
             await self._wait_for_completion(client)
+            debug_log("completed", f"{time.monotonic() - t_start:.1f}s")
             send_notification("KeyBridge", "Sent", f"{len(text)} chars")
 
         except Exception as e:
+            debug_log("ERROR", repr(e))
             send_notification("KeyBridge", "Error", str(e)[:50])
 
         finally:
+            debug_log("flow end", f"{time.monotonic() - t_start:.1f}s")
             if client and client.is_connected:
                 try:
                     await client.disconnect()
@@ -502,13 +535,20 @@ class KeyBridgeDelegate(NSObject):
             val = int.from_bytes(raw, "little")
             if val > 0:
                 current_free[0] = val
+                self._fw_full = 262143 if val > 65535 else 65535  # Slate 256 KB, dongle 64 KB
         except Exception:
             pass
+
+        aborted = [False]
 
         def status_callback(sender, data):
             try:
                 if data and len(data) >= 4:
-                    current_free[0] = int.from_bytes(data[:4], "little")
+                    val = int.from_bytes(data[:4], "little")
+                    if val == 0xFFFFFFFE:  # Stop pressed on the board
+                        aborted[0] = True
+                    else:
+                        current_free[0] = val
             except Exception:
                 pass
             buffer_event.set()
@@ -518,8 +558,12 @@ class KeyBridgeDelegate(NSObject):
             for i in range(0, len(encoded), chunk_size):
                 chunk = encoded[i : i + chunk_size]
 
+                if aborted[0]:
+                    print("[ABORT] cancelled on the board")
+                    self._aborted = True
+                    break
                 wait_start = time.monotonic()
-                while current_free[0] < SEND_THRESHOLD:
+                while current_free[0] < SEND_THRESHOLD and not aborted[0]:
                     buffer_event.clear()
                     try:
                         await asyncio.wait_for(buffer_event.wait(), timeout=5.0)
@@ -535,6 +579,9 @@ class KeyBridgeDelegate(NSObject):
                             print("[FLOW] Buffer wait timed out, forcing through")
                             break
 
+                if aborted[0]:
+                    self._aborted = True
+                    break
                 await asyncio.wait_for(
                     client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True),
                     timeout=10.0,
@@ -556,7 +603,7 @@ class KeyBridgeDelegate(NSObject):
 
     async def _wait_for_completion(self, client):
         """Poll STATUS until firmware queue is fully drained (typing complete)."""
-        FIRMWARE_BUFFER_FULL = 65535
+        FIRMWARE_BUFFER_FULL = getattr(self, "_fw_full", 65535)
         COMPLETION_TIMEOUT = 300  # 5 minutes max for very large pastes
         POLL_INTERVAL = 1.0
 

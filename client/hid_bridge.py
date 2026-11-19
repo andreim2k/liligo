@@ -90,7 +90,7 @@ CHAR_STATUS_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26aa"
 CHAR_CONFIG_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26ab"
 CHAR_TOTAL_UUID  = "beb5483e-36e1-4688-b7f5-ea07361b26ac"
 
-DEVICE_NAME = "KeyBridge"
+DEVICE_NAME = "KeyBridge Slate"  # the old dongle also advertises "KeyBridge"
 
 PROFILE_SLOW = 0
 PROFILE_NORMAL = 1
@@ -276,10 +276,16 @@ class KeyBridgeClient:
         except Exception:
             pass
 
+        aborted = [False]
+
         def status_callback(sender, data):
             try:
                 if data and len(data) >= 4:
-                    current_free[0] = int.from_bytes(data[:4], 'little')
+                    val = int.from_bytes(data[:4], 'little')
+                    if val == 0xFFFFFFFE:  # Stop pressed on the board
+                        aborted[0] = True
+                    else:
+                        current_free[0] = val
             except Exception:
                 pass
             buffer_event.set()
@@ -289,9 +295,13 @@ class KeyBridgeClient:
             for i in range(0, len(encoded), self.chunk_size):
                 chunk = encoded[i:i + self.chunk_size]
 
+                if aborted[0]:
+                    print("Send cancelled on the board")
+                    break
+
                 # Wait if firmware buffer is nearly full
                 wait_start = time.monotonic()
-                while current_free[0] < SEND_THRESHOLD:
+                while current_free[0] < SEND_THRESHOLD and not aborted[0]:
                     buffer_event.clear()
                     try:
                         await asyncio.wait_for(buffer_event.wait(), timeout=5.0)
@@ -307,6 +317,9 @@ class KeyBridgeClient:
                             print("[FLOW] Buffer wait timed out after 30s, forcing through")
                             break
 
+                if aborted[0]:
+                    print("Send cancelled on the board")
+                    break
                 await asyncio.wait_for(
                     self.client.write_gatt_char(CHAR_TEXT_UUID, chunk, response=True),
                     timeout=10.0,

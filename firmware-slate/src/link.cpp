@@ -23,12 +23,14 @@ static std::atomic<uint32_t> nextTotal{0};
 static String snippetBuf;
 
 class ServerCb : public BLEServerCallbacks {
-    void onConnect(BLEServer *) override {
+    void onConnect(BLEServer *srv) override {
+        LOG("ble connect (clients=%d)\n", (int)srv->getConnectedCount());
         macConnected = true;
         nextIsSessionStart = true;
         uiRequestRedraw();
     }
-    void onDisconnect(BLEServer *) override {
+    void onDisconnect(BLEServer *srv) override {
+        LOG("ble disconnect (clients=%d)\n", (int)srv->getConnectedCount());
         macConnected = false;
         uiRequestRedraw();
         BLEDevice::startAdvertising();
@@ -39,6 +41,8 @@ class TextCb : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *c) override {
         std::string v = c->getValue();
         if (v.empty()) return;
+        LOG("bt text: %u bytes hold=%d aborting=%d usb=%d phase=%d\n", (unsigned)v.size(), settings.hold, hidAborting(), usbMounted.load(), (int)phase.load());
+        if (hidAborting()) return;                           // send was cancelled on the board
         if (settings.hold) { stats.refusedToday++; uiRequestRedraw(); return; }
         bool start = nextIsSessionStart.exchange(false);
         hidEnqueue(v.data(), v.size(), start, start ? nextTotal.load() : 0);
@@ -56,6 +60,7 @@ class ConfigCb : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *c) override {
         std::string v = c->getValue();
         if (v.empty()) return;
+        LOG("ble config write (%u bytes)\n", (unsigned)v.size());
         if (v.size() == 5 && (uint8_t)v[0] == 0xFE) {        // time sync: 0xFE + epoch (u32 LE), sent by the Mac on connect
             const uint8_t *q = (const uint8_t *)v.data() + 1;
             uint32_t epoch = q[0] | (q[1] << 8) | (q[2] << 16) | ((uint32_t)q[3] << 24);
@@ -77,8 +82,10 @@ class ConfigCb : public BLECharacteristicCallbacks {
 class TotalCb : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *c) override {
         std::string v = c->getValue();
+        LOG("ble total write (%u bytes)\n", (unsigned)v.size());
         if (v.size() < 4) return;
         const uint8_t *p = (const uint8_t *)v.data();
+        hidClearAbort();                                     // a new send starts
         nextTotal = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
         nextIsSessionStart = true;
     }
@@ -113,6 +120,18 @@ static void linkTask(void *) {
     uint32_t lastFree = 0, lastNotify = 0;
     for (;;) {
         uint32_t f = hidFree();
+        static uint32_t lastAbortNote = 0;
+        if (hidAborting()) {                                 // 0xFFFFFFFE = "send cancelled on the board"
+            if (macConnected && statusChar && millis() - lastAbortNote > 100) {
+                uint32_t a = 0xFFFFFFFE;
+                statusChar->setValue((uint8_t *)&a, 4);
+                statusChar->notify();
+                lastAbortNote = millis();
+                lastFree = 0;                                // normal free-space notice follows
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
         if (macConnected && statusChar && millis() - lastNotify > 25 &&
             (f > lastFree ? f - lastFree : lastFree - f) >= 32) {
             statusChar->setValue((uint8_t *)&f, 4);
@@ -125,7 +144,7 @@ static void linkTask(void *) {
 }
 
 void linkBegin() {
-    BLEDevice::init("KeyBridge");
+    BLEDevice::init("KeyBridge Slate");
     BLEDevice::setMTU(517);
     BLEServer *server = BLEDevice::createServer();
     server->setCallbacks(new ServerCb());
