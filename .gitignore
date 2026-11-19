@@ -27,3 +27,7 @@ Thumbs.db
 
 # Claude local settings
 .claude/settings.local.json
+
+# KeyBridge Slate build artifacts
+firmware-slate/.pio/
+firmware-slate/.vscode/
