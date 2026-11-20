@@ -55,16 +55,7 @@ void hwBegin() {
             struct timeval tv = {epoch, 0};
             settimeofday(&tv, nullptr);
         }
-        if (!rtcValid()) {
-            // No time source without WiFi: start from the firmware build time (local).
-            RTC_DateTime b(__DATE__, __TIME__);
-            struct tm t = {};
-            t.tm_year = b.year - 1900; t.tm_mon = b.month - 1; t.tm_mday = b.day;
-            t.tm_hour = b.hour; t.tm_min = b.minute; t.tm_sec = b.second; t.tm_isdst = -1;
-            struct timeval tv = {mktime(&t), 0};
-            settimeofday(&tv, nullptr);
-            rtcWriteFromSystem();
-        }
+        // No valid RTC (power was lost): stay unset, show --:-- until the Mac syncs it.
     } else {
         LOG("rtc NOT found\n");
     }

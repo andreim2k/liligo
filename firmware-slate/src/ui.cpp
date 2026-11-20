@@ -1087,6 +1087,7 @@ static void uiTask(void *) {
         if (now - lastPower > 2000 || !lastPower) {          // every 2 s, in this task (shares the I2C bus)
             lastPower = now;
             if (powerUpdate()) redraw = true;
+        linkEnable(power.vbus);
             LOG("power: batt=%d %d%% %dmV vbus=%d chg=%d\n", power.battery, power.pct, power.mv, power.vbus, power.chg);
         }
         static Phase lastPhase = Phase::Idle;

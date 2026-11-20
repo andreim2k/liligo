@@ -18,6 +18,8 @@ std::atomic<bool> macConnected{false};
 bool macOnline() { return macConnected.load(); }
 
 static BLECharacteristic *statusChar = nullptr;
+static BLEServer *bleServer = nullptr;
+static std::atomic<bool> linkOn{true};
 static std::atomic<bool> nextIsSessionStart{true};
 static std::atomic<uint32_t> nextTotal{0};
 static String snippetBuf;
@@ -33,7 +35,7 @@ class ServerCb : public BLEServerCallbacks {
         LOG("ble disconnect (clients=%d)\n", (int)srv->getConnectedCount());
         macConnected = false;
         uiRequestRedraw();
-        BLEDevice::startAdvertising();
+        if (linkOn) BLEDevice::startAdvertising();
     }
 };
 
@@ -146,7 +148,7 @@ static void linkTask(void *) {
 void linkBegin() {
     BLEDevice::init("KeyBridge");
     BLEDevice::setMTU(517);
-    BLEServer *server = BLEDevice::createServer();
+    BLEServer *server = bleServer = BLEDevice::createServer();
     server->setCallbacks(new ServerCb());
     BLEService *svc = server->createService(BLEUUID(SERVICE_UUID), 30);
     auto mk = [&](const char *uuid, uint32_t props, BLECharacteristicCallbacks *cb) {
@@ -170,4 +172,16 @@ void linkBegin() {
     adv->setScanResponse(true);
     BLEDevice::startAdvertising();
     xTaskCreatePinnedToCore(linkTask, "link", 4096, nullptr, 2, nullptr, 0);
+}
+
+// Bluetooth only while a cable is plugged in; on battery the radio is silent.
+void linkEnable(bool on) {
+    if (linkOn.exchange(on) == on || !bleServer) return;
+    LOG("bluetooth %s\n", on ? "on" : "off");
+    if (on) {
+        BLEDevice::startAdvertising();
+    } else {
+        BLEDevice::stopAdvertising();
+        for (auto &kv : bleServer->getPeerDevices(true)) bleServer->disconnect(kv.first);
+    }
 }
