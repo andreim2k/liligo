@@ -1016,6 +1016,10 @@ static void act(uint8_t id) {
     redraw = true;
 }
 
+static std::atomic<bool> keyBootHit{false};
+static void IRAM_ATTR keyBootIsr() { static uint32_t t; uint32_t n = millis(); if (n - t > 60) { t = n; keyBootHit = true; } }
+void uiAttachKeys() { attachInterrupt(digitalPinToInterrupt(PIN_BOOT_BTN), keyBootIsr, FALLING); }
+
 static void pollInput() {
     static bool down = false;
     int16_t x, y;
@@ -1041,12 +1045,17 @@ static void pollInput() {
         lastTouchMs = millis();
     }
 
-    // BOOT key flips the screen; IO48 (side key) goes home.
-    static uint32_t bootDown = 0, userDown = 0;
-    if (digitalRead(PIN_BOOT_BTN) == LOW) { if (!bootDown) bootDown = millis(); }
-    else if (bootDown) { if (millis() - bootDown > 40) act(A_FLIP); bootDown = 0; }
-    if (digitalRead(PIN_USER_BTN) == LOW) { if (!userDown) userDown = millis(); }
-    else if (userDown) { if (millis() - userDown > 40) { go(P_MOVER); redraw = true; } userDown = 0; }
+    // BOOT key flips the screen: latched by interrupt, so a quick click is never missed
+    // while the panel is busy.
+    // One click flips (after 0.35 s, so a second click can be told apart); a double click cleans.
+    static uint32_t bootFirst = 0;
+    if (keyBootHit.exchange(false)) {
+        if (bootFirst && millis() - bootFirst < 350) {
+            bootFirst = 0;
+            if (millis() - lastFullClean > 3000) cleanReq = 2;
+        } else bootFirst = millis();
+    }
+    if (bootFirst && millis() - bootFirst >= 350) { bootFirst = 0; act(A_FLIP); }
 }
 
 // ---------------- task ----------------
@@ -1063,6 +1072,7 @@ static void uiTask(void *) {
     epd_set_rotation(EPD_ROT_LANDSCAPE);
     lastDark = settings.dark;
     lastFlip = settings.flipped;
+    uiAttachKeys();
     crumb("r0");
     render();
     crumb("f0");

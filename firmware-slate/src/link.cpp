@@ -134,6 +134,7 @@ static void linkTask(void *) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
+        if (macConnected && statusChar) statusChar->setValue((uint8_t *)&f, 4);   // reads always see the live value
         if (macConnected && statusChar && millis() - lastNotify > 25 &&
             (f > lastFree ? f - lastFree : lastFree - f) >= 32) {
             statusChar->setValue((uint8_t *)&f, 4);
