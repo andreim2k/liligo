@@ -1017,7 +1017,7 @@ static void act(uint8_t id) {
 }
 
 static std::atomic<bool> keyBootHit{false};
-static void IRAM_ATTR keyBootIsr() { static uint32_t t; uint32_t n = millis(); if (n - t > 60) { t = n; keyBootHit = true; } }
+static void IRAM_ATTR keyBootIsr() { static uint32_t t; uint32_t n = millis(); if (n - t > 90) { t = n; keyBootHit = true; } }
 void uiAttachKeys() { attachInterrupt(digitalPinToInterrupt(PIN_BOOT_BTN), keyBootIsr, FALLING); }
 
 static void pollInput() {
@@ -1047,15 +1047,26 @@ static void pollInput() {
 
     // BOOT key flips the screen: latched by interrupt, so a quick click is never missed
     // while the panel is busy.
-    // One click flips (after 0.35 s, so a second click can be told apart); a double click cleans.
-    static uint32_t bootFirst = 0;
-    if (keyBootHit.exchange(false)) {
-        if (bootFirst && millis() - bootFirst < 350) {
-            bootFirst = 0;
-            if (millis() - lastFullClean > 3000) cleanReq = 2;
-        } else bootFirst = millis();
+    // BOOT key: a short click flips the screen, holding it ~1 s runs the curtain.
+    // The press is latched by interrupt, so a quick click is never missed while the panel is busy.
+    static uint32_t bootDownAt = 0;
+    static bool bootFired = false;
+    bool bootLow = digitalRead(PIN_BOOT_BTN) == LOW;
+    if (keyBootHit.exchange(false) && !bootDownAt) {
+        if (bootLow) { bootDownAt = millis(); bootFired = false; }
+        else act(A_FLIP);                          // the click was over before we looked
     }
-    if (bootFirst && millis() - bootFirst >= 350) { bootFirst = 0; act(A_FLIP); }
+    if (bootDownAt) {
+        if (bootLow) {
+            if (!bootFired && millis() - bootDownAt >= 1000) {
+                bootFired = true;
+                if (millis() - lastFullClean > 3000) cleanReq = 2;
+            }
+        } else {
+            if (!bootFired) act(A_FLIP);
+            bootDownAt = 0;
+        }
+    }
 }
 
 // ---------------- task ----------------
