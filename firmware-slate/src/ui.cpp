@@ -403,7 +403,7 @@ static void drawPower(int right, int cy) {
 
 static void leftCard(bool dashed, const char *footer) {
     if (dashed) dashedBorder(22, 22, 392, 496, 26, FG); else border(22, 22, 392, 496, 26, 2, FG);
-    tbox("T5 S3 Pro", 46, 32, 220, 31, AL_L, F_S, F_XS, FG);
+    tbox("KeyBridge Slate", 46, 32, 220, 31, AL_L, F_S, F_XS, FG);
     drawPower(390, 47);
     tbox(footer, 42, 470, 352, 22, AL_C, F_XS, F_XS, FG);
     tbox("© 2026 TechWare", 42, 494, 352, 20, AL_C, F_XS, F_XS, FG);
@@ -688,7 +688,7 @@ static void segDigit(int x, int y, int c) {
 
 static void drawStandby() {
     dashedBorder(22, 22, 916, 496, 26, FG);
-    tbox("T5 S3 Pro", 46, 32, 220, 31, AL_L, F_S, F_XS, FG);
+    tbox("KeyBridge Slate", 46, 32, 220, 31, AL_L, F_S, F_XS, FG);
     drawPower(914, 47);
     border(405, 30, 150, 34, 17, 2, FG);                       // status chip
     tbox("STANDBY", 415, 36, 130, 22, AL_C, F_XS, F_XS, FG);
