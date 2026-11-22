@@ -715,7 +715,7 @@ static void drawStandby() {
     epd.fillRect(120, 356, 720, 2, FG);                        // divider
 
     const char *usb = power.vbus ? "Power only" : "Not connected";
-    const char *bat = power.chg == 1 || power.chg == 2 ? "Charging" : (power.vbus ? "Full" : "On battery");
+    const char *bat = power.chg == 1 || power.chg == 2 ? "Charging" : (power.chg == 3 ? "Full" : power.vbus ? "Not charging" : "On battery");
     char pct[12];
     snprintf(pct, sizeof pct, "%d%%", power.pct);
     standbyStat(240, "USB", usb);

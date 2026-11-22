@@ -96,12 +96,22 @@ static bool i2cRead(uint8_t addr, uint8_t reg, uint8_t *buf, int n) {
     return true;
 }
 
+// Rough Li-ion curve: millivolts -> percent. Used when the fuel gauge's own estimate is far off (it can freeze when uncalibrated).
+static int voltagePct(int mv) {
+    static const int T[][2] = {{3300, 0}, {3500, 5}, {3600, 15}, {3700, 35}, {3750, 50}, {3800, 60}, {3900, 75}, {4000, 87}, {4100, 95}, {4200, 100}};
+    if (mv <= T[0][0]) return 0;
+    for (int i = 1; i < 10; i++)
+        if (mv <= T[i][0]) return T[i-1][1] + (T[i][1] - T[i-1][1]) * (mv - T[i-1][0]) / (T[i][0] - T[i-1][0]);
+    return 100;
+}
+
 bool powerUpdate() {
     PowerInfo p;
     uint8_t b[2];
     if (i2cRead(0x55, 0x2C, b, 2)) p.pct = min(100, (int)(b[0] | (b[1] << 8)));        // state of charge %
     if (i2cRead(0x55, 0x08, b, 2)) p.mv = b[0] | (b[1] << 8);                            // battery mV
     p.battery = p.mv > 2500 && p.mv < 5000;
+    if (p.battery) { int v = voltagePct(p.mv); if (abs(v - p.pct) > 20) p.pct = v; }   // gauge stuck: trust the voltage
     if (i2cRead(0x6B, 0x0B, b, 1)) {                                                     // charger status
         p.vbus = (b[0] & 0x04) != 0 || ((b[0] >> 5) & 7) != 0;                          // power good or VBUS_STAT
         p.chg = (b[0] >> 3) & 3;
