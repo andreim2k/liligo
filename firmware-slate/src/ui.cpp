@@ -724,7 +724,7 @@ static void drawStandby() {
     epd.fillRect(360, 372, 2, 54, FG);                         // column rules
     epd.fillRect(600, 372, 2, 54, FG);
 
-    tbox(usbMounted.load() && usbSuspended.load() ? "Computer asleep. Mover paused" : "Mover paused until USB connects",
+    tbox(usbMounted.load() && usbSuspended.load() ? "Computer asleep. Mover and KeyBridge paused" : "Mover and KeyBridge paused until USB connects",
          180, 450, 600, 24, AL_C, F_XS, F_XS, FG);
     tbox("© 2026 TechWare", 42, 494, 876, 20, AL_C, F_XS, F_XS, FG);
 }
