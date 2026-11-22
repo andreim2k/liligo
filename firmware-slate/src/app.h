@@ -93,7 +93,7 @@ MoverState moverState();
 
 // ---------- Bluetooth link to the Mac (link.cpp) ----------
 void linkBegin();
-void linkEnable(bool on);                      // Bluetooth on only while a cable is plugged in
+void linkEnable(bool on);                      // Bluetooth on only while plugged into a computer (USB data, not just power)
 bool macOnline();   // Mac app currently connected
 
 // ---------- crash breadcrumbs (survive a reboot) ----------
