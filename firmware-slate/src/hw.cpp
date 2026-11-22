@@ -116,6 +116,10 @@ bool powerUpdate() {
         p.vbus = (b[0] & 0x04) != 0 || ((b[0] >> 5) & 7) != 0;                          // power good or VBUS_STAT
         p.chg = (b[0] >> 3) & 3;
     }
+    if (p.battery && p.vbus) {                      // the charger knows best: done = 100 %, still charging = never above 99 %
+        if (p.chg == 3) p.pct = 100;
+        else if (p.chg != 0 && p.pct > 99) p.pct = 99;
+    }
     bool changed = p.battery != power.battery || p.vbus != power.vbus || p.chg != power.chg ||
                    (p.battery && p.pct != power.pct);
     power = p;
