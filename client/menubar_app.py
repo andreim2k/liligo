@@ -377,6 +377,7 @@ class KeyBridgeDelegate(NSObject):
         The firmware persists it in NVS so this only needs to run once per
         change — subsequent pastes will already see the new profile."""
         client = None
+        t_start = time.monotonic()
         try:
             device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=5.0)
             if device is None:
@@ -464,8 +465,16 @@ class KeyBridgeDelegate(NSObject):
                     break
                 await asyncio.sleep(0.1)
 
-            # Keep the board's clock right (it stores it on its RTC chip).
+            # Keep the board's clock right (it stores it on its RTC chip). Only the Slate
+            # (256 KB queue) understands this; the small dongle would read it as a speed profile.
             try:
+                raw0 = await asyncio.wait_for(client.read_gatt_char(CHAR_STATUS_UUID), timeout=3.0)
+                is_slate = int.from_bytes(raw0, "little") > 65535
+            except Exception:
+                is_slate = False
+            try:
+                if not is_slate:
+                    raise RuntimeError("not a Slate")
                 await asyncio.wait_for(
                     client.write_gatt_char(
                         CHAR_CONFIG_UUID, b"\xfe" + struct.pack("<I", int(time.time())), response=True
@@ -527,6 +536,7 @@ class KeyBridgeDelegate(NSObject):
         buffer_event = asyncio.Event()
         buffer_event.set()
         current_free = [FIRMWARE_BUFFER]
+        self._fw_full = 65535                      # per connection: the dongle must not inherit the Slate's size
 
         try:
             raw = await asyncio.wait_for(
